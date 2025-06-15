@@ -1,6 +1,7 @@
 # Search API Python Client
 
 A Python client library for the Search API, providing easy access to email, phone, and domain search functionality.
+Acquire your API-Key through @ADSearchEngine_bot on Telegram
 
 ## Installation
 
