@@ -16,7 +16,7 @@ setup(
     description="A Python client library for the Search API",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/search-api-python",
+    url="https://github.com/AntiChrist-Coder/search_api_library",
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Developers",
