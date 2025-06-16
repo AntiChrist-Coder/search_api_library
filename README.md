@@ -31,7 +31,6 @@ Acquire your API key through @ADSearchEngine_bot on Telegram.
 - Email search with optional house value, extra info, and phone number formatting
 - Phone number search with validation, formatting, and property details
 - Domain search with comprehensive results
-- Automatic caching of results
 - Rate limiting and retry handling
 - Type hints and comprehensive documentation
 - Enhanced address model with property details (bedrooms, bathrooms, living area, home status)
