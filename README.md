@@ -5,7 +5,7 @@ Acquire your API key through @ADSearchEngine_bot on Telegram.
 
 ## Installation
 
-    pip install search-api
+    pip install AD-SearchAPI
 
 ## Quick Start
 

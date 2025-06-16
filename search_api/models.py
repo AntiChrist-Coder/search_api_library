@@ -108,6 +108,6 @@ class SearchAPIConfig:
 
     api_key: str
     max_retries: int = 3
-    timeout: int = 30
+    timeout: int = 90
     proxy: Optional[Dict[str, str]] = None  # Format: {"http": "http://proxy:port", "https": "https://proxy:port"}
     debug_mode: bool = False
