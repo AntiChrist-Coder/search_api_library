@@ -111,6 +111,7 @@ class SearchAPIConfig:
     """Configuration for the Search API client."""
 
     api_key: str
+    cache_ttl: int = 3600
     max_retries: int = 3
     timeout: int = 30
     proxy: Optional[Dict[str, str]] = None  # Format: {"http": "http://proxy:port", "https": "https://proxy:port"}

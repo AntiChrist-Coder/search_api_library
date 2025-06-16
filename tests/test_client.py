@@ -45,7 +45,6 @@ def test_init_with_api_key():
 def test_init_with_config():
     config = SearchAPIConfig(
         api_key="test_api_key",
-        cache_ttl=1800,
         max_retries=5,
         timeout=60,
         base_url="https://custom-api.dev",

@@ -1,0 +1,13 @@
+LICENSE
+README.md
+setup.py
+AD_SearchAPI.egg-info/PKG-INFO
+AD_SearchAPI.egg-info/SOURCES.txt
+AD_SearchAPI.egg-info/dependency_links.txt
+AD_SearchAPI.egg-info/requires.txt
+AD_SearchAPI.egg-info/top_level.txt
+search_api/__init__.py
+search_api/client.py
+search_api/exceptions.py
+search_api/models.py
+tests/test_client.py
