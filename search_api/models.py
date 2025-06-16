@@ -76,12 +76,10 @@ class EmailSearchResult(BaseSearchResult):
     """Result from email search."""
 
     email: str
-    extra_info: Optional[dict] = None
 
-    def __init__(self, email: str, extra_info: Optional[dict] = None, **kwargs):
+    def __init__(self, email: str, **kwargs):
         super().__init__(**kwargs)
         self.email = email
-        self.extra_info = extra_info
 
 
 @dataclass(init=False)
@@ -89,12 +87,10 @@ class PhoneSearchResult(BaseSearchResult):
     """Result from phone search."""
 
     phone: PhoneNumber
-    extra_info: Optional[dict] = None
 
-    def __init__(self, phone: PhoneNumber, extra_info: Optional[dict] = None, **kwargs):
+    def __init__(self, phone: PhoneNumber, **kwargs):
         super().__init__(**kwargs)
         self.phone = phone
-        self.extra_info = extra_info
 
 
 @dataclass

@@ -386,7 +386,6 @@ class SearchAPI:
             dob=result.get('dob'),
             addresses=[self._parse_address(addr) for addr in result.get('addresses', [])],
             phone_numbers=[self._parse_phone_number(num, phone_format) for num in result.get('numbers', [])],
-            extra_info=result.get('extra_info'),
             age=result.get('age')
         )
 
@@ -422,7 +421,6 @@ class SearchAPI:
                     addresses=[self._parse_address(addr) for addr in item.get('addresses', [])],
                     phone_numbers=[self._parse_phone_number(num, phone_format) for num in item.get('numbers', [])],
                     emails=item.get('emails', []),
-                    extra_info=item.get('extra_info'),
                     age=item.get('age')
                 ))
         
@@ -453,7 +451,6 @@ class SearchAPI:
                     dob=item.get('dob'),
                     addresses=[self._parse_address(addr) for addr in item.get('addresses', [])],
                     phone_numbers=[self._parse_phone_number(num) for num in item.get('numbers', [])],
-                    extra_info=item.get('extra_info'),
                     age=item.get('age')
                 ))
             
