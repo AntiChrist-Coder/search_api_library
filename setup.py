@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="AD-SearchAPI",
-    version="1.0.1",
+    version="1.0.2",
     packages=find_packages(),
     install_requires=[
         "requests>=2.31.0",
