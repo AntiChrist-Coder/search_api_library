@@ -1,5 +1,7 @@
 import json
 import re
+import gzip
+import io
 from datetime import date
 from decimal import Decimal
 from typing import Dict, List, Optional, Union
@@ -14,6 +16,12 @@ from requests.adapters import HTTPAdapter
 import logging
 from requests import Session, Response
 from requests.exceptions import RequestException, Timeout, ConnectionError, HTTPError
+
+try:
+    import brotli
+    BROTLI_AVAILABLE = True
+except ImportError:
+    BROTLI_AVAILABLE = False
 
 from .exceptions import (
     AuthenticationError,
@@ -198,6 +206,12 @@ class SearchAPI:
     def _make_request(
         self, params: Optional[Dict] = None
     ) -> Dict:
+        """
+        Make a GET request to the Search API.
+        
+        Handles gzipped and Brotli-compressed responses explicitly since some APIs
+        don't properly set headers for automatic decompression.
+        """
         if params is None:
             params = {}
         params['api_key'] = self.config.api_key
@@ -217,18 +231,33 @@ class SearchAPI:
             )
             response.raise_for_status()
 
-            if not response.text.strip():
+            if self.config.debug_mode:
+                content_encoding = response.headers.get('Content-Encoding', 'none')
+                content_length = response.headers.get('Content-Length', 'unknown')
+                logger.debug(f"Response headers - Content-Encoding: {content_encoding}, Content-Length: {content_length}")
+                logger.debug(f"Response encoding: {response.encoding}")
+
+            content_encoding = response.headers.get('Content-Encoding', '')
+            response_content = response.content
+            
+            try:
+                response_text = self._try_decompress_response(response_content, content_encoding)
+            except Exception as e:
+                logger.error(f"Failed to decompress/decode response: {str(e)}")
+                raise SearchAPIError(f"Failed to decompress/decode response: {str(e)}")
+
+            if not response_text.strip():
                 if self.config.debug_mode:
                     logger.warning(f"Empty response received from {self.BASE_URL}")
                 return {}
 
             try:
-                result = response.json()
+                result = json.loads(response_text)
                 if self.config.debug_mode:
                     logger.debug(f"Response received: {result}")
                 return result
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON response: {response.text}")
+                logger.error(f"Failed to parse JSON response: {response_text}")
                 raise SearchAPIError(f"Invalid JSON response: {str(e)}")
 
         except Timeout as e:
@@ -459,3 +488,65 @@ class SearchAPI:
             results=email_results,
             total_results=len(email_results)
         )
+
+    def _try_decompress_response(self, response_content: bytes, content_encoding: str) -> str:
+        if self.config.debug_mode:
+            logger.debug(f"Attempting to decompress content with encoding: {content_encoding}")
+            logger.debug(f"Content length: {len(response_content)}")
+            if len(response_content) >= 4:
+                logger.debug(f"First 4 bytes: {response_content[:4].hex()}")
+        
+        if 'br' in content_encoding.lower() and BROTLI_AVAILABLE:
+            try:
+                decompressed = brotli.decompress(response_content)
+                result = decompressed.decode('utf-8')
+                if self.config.debug_mode:
+                    logger.debug("Successfully decompressed with Brotli")
+                return result
+            except Exception as e:
+                if self.config.debug_mode:
+                    logger.debug(f"Brotli decompression failed: {str(e)}")
+        
+        if 'gzip' in content_encoding.lower():
+            try:
+                decompressed = gzip.decompress(response_content)
+                result = decompressed.decode('utf-8')
+                if self.config.debug_mode:
+                    logger.debug("Successfully decompressed with gzip")
+                return result
+            except Exception as e:
+                if self.config.debug_mode:
+                    logger.debug(f"Gzip decompression failed: {str(e)}")
+        
+        if len(response_content) >= 2 and response_content[:2] == b'\x1f\x8b':
+            try:
+                decompressed = gzip.decompress(response_content)
+                result = decompressed.decode('utf-8')
+                if self.config.debug_mode:
+                    logger.debug("Successfully decompressed gzip by magic bytes")
+                return result
+            except Exception as e:
+                if self.config.debug_mode:
+                    logger.debug(f"Gzip magic bytes decompression failed: {str(e)}")
+        
+        if len(response_content) >= 2 and response_content[:2] == b'\xce\xb2' and BROTLI_AVAILABLE:
+            try:
+                decompressed = brotli.decompress(response_content)
+                result = decompressed.decode('utf-8')
+                if self.config.debug_mode:
+                    logger.debug("Successfully decompressed Brotli by magic bytes")
+                return result
+            except Exception as e:
+                if self.config.debug_mode:
+                    logger.debug(f"Brotli magic bytes decompression failed: {str(e)}")
+        
+        try:
+            result = response_content.decode('utf-8')
+            if self.config.debug_mode:
+                logger.debug("Successfully decoded as plain text")
+            return result
+        except Exception as e:
+            if self.config.debug_mode:
+                logger.debug(f"Plain text decoding failed: {str(e)}")
+        
+        raise SearchAPIError(f"Failed to decompress or decode response content. Content-Encoding: {content_encoding}, Content length: {len(response_content)}")

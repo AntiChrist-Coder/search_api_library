@@ -175,4 +175,166 @@ def test_parse_phone_number_invalid(client):
     result = client._parse_phone_number(phone)
     assert isinstance(result, PhoneNumber)
     assert result.number == "invalid-phone"
-    assert result.is_valid is False 
+    assert result.is_valid is False
+
+
+@patch("requests.Session.request")
+def test_compression_handling(mock_request, client):
+    """Test that the client properly handles gzipped/compressed responses."""
+    # Mock response with gzip encoding
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.headers = {
+        'Content-Encoding': 'gzip',
+        'Content-Length': '1234'
+    }
+    mock_response.text = '{"name": "John Doe", "email": "test@example.com"}'
+    mock_response.json.return_value = {"name": "John Doe", "email": "test@example.com"}
+    mock_response.raise_for_status.return_value = None
+    
+    mock_request.return_value = mock_response
+    
+    # Test that the request is made with proper headers
+    result = client.search_email("test@example.com")
+    
+    # Verify that Accept-Encoding header is set in the session
+    assert "Accept-Encoding" in client.session.headers
+    assert "gzip" in client.session.headers["Accept-Encoding"]
+    
+    # Verify that the request was made
+    mock_request.assert_called_once()
+    
+    # Verify that the response was properly handled
+    assert result.name == "John Doe"
+    assert result.email == "test@example.com"
+
+
+@patch("requests.Session.request")
+def test_gzip_decompression(mock_request, client):
+    """Test that gzipped responses are properly decompressed."""
+    import gzip
+    import json
+    
+    # Create a gzipped JSON response
+    original_data = {"name": "Jane Smith", "email": "jane@example.com"}
+    json_str = json.dumps(original_data)
+    gzipped_content = gzip.compress(json_str.encode('utf-8'))
+    
+    # Mock response with gzipped content
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.headers = {
+        'Content-Encoding': 'gzip',
+        'Content-Length': str(len(gzipped_content))
+    }
+    mock_response.content = gzipped_content
+    mock_response.text = json_str  # This should be the decompressed text
+    mock_response.raise_for_status.return_value = None
+    
+    mock_request.return_value = mock_response
+    
+    # Test that gzipped response is properly handled
+    result = client.search_email("jane@example.com")
+    
+    # Verify that the response was properly decompressed and parsed
+    assert result.name == "Jane Smith"
+    assert result.email == "jane@example.com"
+
+
+@patch("requests.Session.request")
+def test_compression_debug_logging(mock_request, client):
+    """Test that compression information is logged in debug mode."""
+    # Create client with debug mode enabled
+    debug_config = SearchAPIConfig(api_key="test_api_key", debug_mode=True)
+    debug_client = SearchAPI(config=debug_config)
+    
+    # Mock response with compression headers
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.headers = {
+        'Content-Encoding': 'gzip',
+        'Content-Length': '567'
+    }
+    mock_response.text = '{"name": "Jane Smith"}'
+    mock_response.json.return_value = {"name": "Jane Smith"}
+    mock_response.raise_for_status.return_value = None
+    mock_response.encoding = 'utf-8'
+    
+    mock_request.return_value = mock_response
+    
+    # Test that debug logging includes compression info
+    with patch('logging.Logger.debug') as mock_debug:
+        debug_client.search_email("test@example.com")
+        
+        # Verify that compression headers were logged
+        debug_calls = [call[0][0] for call in mock_debug.call_args_list]
+        compression_logged = any('Content-Encoding' in str(call) for call in debug_calls)
+        assert compression_logged, "Compression headers should be logged in debug mode"
+
+
+@patch("requests.Session.request")
+def test_gzip_magic_bytes_detection(mock_request, client):
+    """Test that gzipped responses are detected by magic bytes even without Content-Encoding header."""
+    import gzip
+    import json
+    
+    # Create a gzipped JSON response
+    original_data = {"name": "Bob Johnson", "email": "bob@example.com"}
+    json_str = json.dumps(original_data)
+    gzipped_content = gzip.compress(json_str.encode('utf-8'))
+    
+    # Mock response with gzipped content but no Content-Encoding header
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.headers = {
+        'Content-Length': str(len(gzipped_content))
+        # No Content-Encoding header
+    }
+    mock_response.content = gzipped_content
+    mock_response.text = json_str
+    mock_response.raise_for_status.return_value = None
+    
+    mock_request.return_value = mock_response
+    
+    # Test that gzipped response is detected by magic bytes and properly handled
+    result = client.search_email("bob@example.com")
+    
+    # Verify that the response was properly decompressed and parsed
+    assert result.name == "Bob Johnson"
+    assert result.email == "bob@example.com"
+
+
+@patch("requests.Session.request")
+def test_brotli_decompression(mock_request, client):
+    """Test that Brotli-compressed responses are properly decompressed."""
+    try:
+        import brotli
+    except ImportError:
+        pytest.skip("brotli library not available")
+    
+    import json
+    
+    # Create a Brotli-compressed JSON response
+    original_data = {"name": "Alice Brown", "email": "alice@example.com"}
+    json_str = json.dumps(original_data)
+    brotli_content = brotli.compress(json_str.encode('utf-8'))
+    
+    # Mock response with Brotli-compressed content
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.headers = {
+        'Content-Encoding': 'br',
+        'Content-Length': str(len(brotli_content))
+    }
+    mock_response.content = brotli_content
+    mock_response.text = json_str
+    mock_response.raise_for_status.return_value = None
+    
+    mock_request.return_value = mock_response
+    
+    # Test that Brotli-compressed response is properly handled
+    result = client.search_email("alice@example.com")
+    
+    # Verify that the response was properly decompressed and parsed
+    assert result.name == "Alice Brown"
+    assert result.email == "alice@example.com" 
