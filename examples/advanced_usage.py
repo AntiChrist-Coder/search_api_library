@@ -290,7 +290,7 @@ def demonstrate_context_manager():
     print("="*60)
     
     config = SearchAPIConfig(
-        api_key="3e5d94e6c9f5438c94b89eaf432f1111",
+        api_key="your-api-key",
         debug_mode=True,
         enable_caching=True,
     )
@@ -335,7 +335,7 @@ def main():
     
     # Create client with advanced configuration
     config = SearchAPIConfig(
-        api_key="3e5d94e6c9f5438c94b89eaf432f1111",
+        api_key="your-api-key",
         debug_mode=False,
         enable_caching=True,
         cache_ttl=1800,  # 30 minutes

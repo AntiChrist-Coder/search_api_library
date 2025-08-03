@@ -8,7 +8,7 @@ def main():
     )
     
     config = SearchAPIConfig(
-        api_key="3e5d94e6c9f5438c94b89eaf432f1111",
+        api_key="your-api-key",
         debug_mode=False,
         enable_caching=True,
         timeout=90,
