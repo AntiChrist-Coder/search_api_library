@@ -78,6 +78,7 @@ class SearchAPI:
         self._balance_cache = None
         self._balance_cache_time = None
         
+        # Constants for data processing
         self.MAJOR_DOMAINS = {
             "gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "aol.com",
             "icloud.com", "live.com", "msn.com", "comcast.net", "me.com",
@@ -110,6 +111,7 @@ class SearchAPI:
         """Create and configure the HTTP session."""
         session = Session()
 
+        # Configure retry strategy
         retry_strategy = Retry(
             total=self.config.max_retries,
             status_forcelist=[429, 500, 502, 503, 504],
@@ -117,16 +119,19 @@ class SearchAPI:
             backoff_factor=1,
         )
         
+        # Mount adapter with retry strategy
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("http://", adapter)
         session.mount("https://", adapter)
         
+        # Set default headers
         session.headers.update({
             "User-Agent": self.config.user_agent,
             "Accept": "application/json",
             "Content-Type": "application/x-www-form-urlencoded",
         })
         
+        # Configure proxy if provided
         if self.config.proxy:
             session.proxies.update(self.config.proxy)
         
@@ -151,15 +156,20 @@ class SearchAPI:
         if not phone or not isinstance(phone, str):
             return False
         
+        # Remove common separators and spaces
         cleaned_phone = phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "").replace(".", "")
         
+        # Check if it starts with + (international format)
         if cleaned_phone.startswith("+"):
-            if len(cleaned_phone) >= 10:
+            # International format: +[country code][number]
+            if len(cleaned_phone) >= 10:  # At least country code + 7 digits
                 return True
         
+        # Check if it's a US number without country code (10 digits)
         if len(cleaned_phone) == 10 and cleaned_phone.isdigit():
             return True
         
+        # Check if it's a US number with country code (11 digits starting with 1)
         if len(cleaned_phone) == 11 and cleaned_phone.startswith("1") and cleaned_phone.isdigit():
             return True
         
@@ -170,21 +180,27 @@ class SearchAPI:
         if not domain or not isinstance(domain, str):
             return False
         
+        # Basic domain validation
         domain = domain.lower().strip()
         
+        # Check for valid characters
         if not domain.replace(".", "").replace("-", "").isalnum():
             return False
         
+        # Check for at least one dot
         if "." not in domain:
             return False
         
+        # Check that it doesn't start or end with dot
         if domain.startswith(".") or domain.endswith("."):
             return False
         
+        # Check for valid TLD (at least 2 characters after last dot)
         parts = domain.split(".")
         if len(parts) < 2 or len(parts[-1]) < 2:
             return False
         
+        # Check that each part is not empty and doesn't start/end with hyphen
         for part in parts:
             if not part or part.startswith("-") or part.endswith("-"):
                 return False
@@ -202,8 +218,10 @@ class SearchAPI:
                     required_credits=required_credits
                 )
         except InsufficientBalanceError:
+            # Re-raise the exception
             raise
         except Exception as e:
+            # Log other errors but don't fail the operation
             if self.config.debug_mode:
                 logger.warning(f"Could not verify balance: {e}")
     
@@ -217,12 +235,14 @@ class SearchAPI:
         Raises:
             SearchAPIError: If balance check fails
         """
+        # Check cache first
         if self._balance_cache and self._balance_cache_time:
             cache_age = (datetime.now() - self._balance_cache_time).total_seconds()
-            if cache_age < 300:
+            if cache_age < 300:  # 5 minutes cache
                 return self._balance_cache
         
         try:
+            # Use the correct API endpoint for balance
             balance_url = f"{self.config.base_url}?action=get_balance&api_key={self.config.api_key}"
             
             if self.config.debug_mode:
@@ -240,11 +260,12 @@ class SearchAPI:
             
             balance_info = BalanceInfo(
                 current_balance=float(response_data["balance"]),
-                currency="USD",
+                currency="USD",  # Default currency
                 last_updated=datetime.now(),
-                credit_cost_per_search=0.0025
+                credit_cost_per_search=0.0025  # Default cost per search
             )
             
+            # Update cache
             self._balance_cache = balance_info
             self._balance_cache_time = datetime.now()
             
@@ -266,6 +287,7 @@ class SearchAPI:
             SearchAPIError: If access logs retrieval fails
         """
         try:
+            # Use the correct API endpoint for access logs
             logs_url = f"{self.config.base_url}?action=get_access_logs&api_key={self.config.api_key}"
             
             if self.config.debug_mode:
@@ -302,8 +324,24 @@ class SearchAPI:
             raise SearchAPIError(f"Failed to get access logs: {str(e)}")
     
     def _make_request(self, params: Optional[Dict] = None, method: str = "POST") -> Dict[str, Any]:
+        """
+        Make HTTP request to the Search API.
+        
+        Args:
+            params: Request parameters
+            method: HTTP method to use ("POST" or "GET")
+            
+        Returns:
+            Response data as dictionary
+            
+        Raises:
+            Various SearchAPIError subclasses based on the error
+        """
         if params is None:
             params = {}
+        
+        # API key is already included in params for search requests
+        # For balance and access logs, it's added separately
         
         try:
             if self.config.debug_mode:
@@ -316,18 +354,24 @@ class SearchAPI:
                     timeout=self.config.timeout
                 )
             elif method == "GET":
+                # For GET requests, handle phone numbers specially to avoid URL encoding of +
                 if "phone" in params:
+                    # Build URL manually to avoid encoding the + in phone numbers
                     from urllib.parse import urlencode
+                    # Create a copy of params and encode phone number manually
                     encoded_params = {}
                     for key, value in params.items():
                         if key == "phone":
+                            # Don't encode the + in phone numbers
                             encoded_params[key] = value
                         else:
                             encoded_params[key] = value
                     
+                    # Build query string manually
                     query_parts = []
                     for key, value in encoded_params.items():
                         if key == "phone":
+                            # Keep + as + for phone numbers
                             query_parts.append(f"{key}={value}")
                         else:
                             query_parts.append(f"{key}={value}")
@@ -340,6 +384,7 @@ class SearchAPI:
                         timeout=self.config.timeout
                     )
                 else:
+                    # Normal GET request for non-phone searches
                     response = self.session.get(
                         self.config.base_url,
                         params=params,
@@ -352,6 +397,7 @@ class SearchAPI:
                 logger.debug(f"Response status: {response.status_code}")
                 logger.debug(f"Response headers: {dict(response.headers)}")
             
+            # Handle different response status codes
             if response.status_code == 200:
                 return self._parse_response(response)
             elif response.status_code == 401:
@@ -391,6 +437,7 @@ class SearchAPI:
             content = response.content
             content_encoding = response.headers.get("content-encoding", "").lower()
             
+            # Handle different content encodings
             if content_encoding == "gzip":
                 content = gzip.decompress(content)
             elif content_encoding == "br" and BROTLI_AVAILABLE:
@@ -399,17 +446,21 @@ class SearchAPI:
                 import zlib
                 content = zlib.decompress(content)
             
+            # Debug: Log raw response content
             if self.config.debug_mode:
                 logger.debug(f"Raw response content: {content.decode('utf-8')}")
             
+            # Try to parse as JSON
             try:
                 parsed_data = json.loads(content.decode("utf-8"))
                 if self.config.debug_mode:
                     logger.debug(f"Parsed JSON response: {parsed_data}")
                 return parsed_data
             except json.JSONDecodeError:
+                # Try to parse as plain text
                 text_content = content.decode("utf-8")
                 
+                # Check for error messages in plain text
                 if "error" in text_content.lower():
                     error_msg = text_content.strip()
                     if "insufficient" in error_msg.lower() and "balance" in error_msg.lower():
@@ -421,6 +472,7 @@ class SearchAPI:
                     else:
                         raise ServerError(error_msg)
                 else:
+                    # If it's not JSON and not an error, try to parse it as a simple response
                     return {"content": text_content}
                     
         except Exception as e:
@@ -433,10 +485,12 @@ class SearchAPI:
         if not address_str:
             return ""
         
+        # Normalize street types
         for abbrev, full in self.STREET_TYPE_MAP.items():
             pattern = rf'\b{abbrev}\b'
             address_str = re.sub(pattern, full, address_str, flags=re.IGNORECASE)
         
+        # Normalize state abbreviations
         for abbrev, full in self.STATE_ABBREVIATIONS.items():
             pattern = rf'\b{abbrev}\b'
             address_str = re.sub(pattern, full, address_str, flags=re.IGNORECASE)
@@ -450,11 +504,14 @@ class SearchAPI:
             return Address(street=address_str)
         
         if isinstance(address_data, dict):
+            # Handle the actual API response structure
             if "address" in address_data:
+                # This is the structured format with property details
                 street = address_data.get("address", "")
                 zestimate = address_data.get("zestimate")
                 zpid = address_data.get("zpid")
                 
+                # Parse property details if available
                 property_details = address_data.get("property_details", {})
                 bedrooms = property_details.get("bedrooms")
                 bathrooms = property_details.get("bathrooms")
@@ -475,6 +532,7 @@ class SearchAPI:
                     home_status=home_status,
                 )
             else:
+                # Fallback for other dictionary formats
                 return Address(
                     street=self._format_address(address_data.get("street", "")),
                     city=address_data.get("city"),
@@ -496,8 +554,10 @@ class SearchAPI:
         """Parse phone number data into PhoneNumber object."""
         if isinstance(phone_data, str):
             number = phone_data
+            # Clean up the number
             number = number.replace(" ", "").replace("-", "").replace("(", "").replace(")", "").replace(".", "")
             
+            # Ensure proper international format
             if number.startswith("1") and len(number) == 11:
                 number = "+" + number
             elif not number.startswith("+"):
@@ -512,8 +572,10 @@ class SearchAPI:
         
         if isinstance(phone_data, dict):
             number = phone_data.get("number", "")
+            # Clean up the number
             number = number.replace(" ", "").replace("-", "").replace("(", "").replace(")", "").replace(".", "")
             
+            # Ensure proper international format
             if number.startswith("1") and len(number) == 11:
                 number = "+" + number
             elif not number.startswith("+"):
@@ -558,10 +620,16 @@ class SearchAPI:
             
         Raises:
             ValidationError: If email format is invalid
+            InsufficientBalanceError: If account balance is insufficient
             SearchAPIError: For other API errors
         """
+        # Validate email format
         self._validate_email(email)
         
+        # Check balance before making request
+        self._check_balance()
+        
+        # Prepare request parameters
         params = {
             "api_key": self.config.api_key,
             "email": email,
@@ -572,8 +640,10 @@ class SearchAPI:
         if include_extra_info:
             params["extra_info"] = "True"
         
+        # Make request using GET method
         response_data = self._make_request(params, method="GET")
         
+        # Parse and return results
         return self._parse_email_response(email, response_data)
     
     def _parse_email_response(self, email: str, response_data: Dict) -> EmailSearchResult:
@@ -581,13 +651,11 @@ class SearchAPI:
         if self.config.debug_mode:
             logger.debug(f"Parsing email response: {response_data}")
         
+        # Check for error response
         if "error" in response_data:
-            error_msg = response_data["error"]
-            if "Invalid email format" in error_msg:
-                raise ValidationError(f"Invalid email format: {email}")
-            else:
-                raise SearchAPIError(f"Email search failed: {error_msg}")
+            raise SearchAPIError(f"Email search failed: {response_data['error']}")
         
+        # Parse person information
         person = None
         if "name" in response_data and response_data["name"]:
             person = Person(
@@ -596,6 +664,7 @@ class SearchAPI:
                 age=response_data.get("age")
             )
         
+        # Parse addresses
         addresses = []
         if "addresses" in response_data:
             address_data = response_data["addresses"]
@@ -604,6 +673,7 @@ class SearchAPI:
             else:
                 addresses = [self._parse_address(address_data)]
         
+        # Parse phone numbers
         phone_numbers = []
         if "numbers" in response_data:
             phone_data = response_data["numbers"]
@@ -612,8 +682,10 @@ class SearchAPI:
             else:
                 phone_numbers = [self._parse_phone_number(phone_data, "international")]
         
+        # Parse additional emails
         emails = response_data.get("emails", [])
         
+        # Calculate total results based on actual data found
         total_results = len(addresses) + len(phone_numbers) + len(emails)
         
         return EmailSearchResult(
@@ -624,7 +696,7 @@ class SearchAPI:
             emails=emails,
             search_timestamp=datetime.now(),
             total_results=total_results,
-            search_cost=0.0025,
+            search_cost=0.0025,  # Email search cost
             email_valid=response_data.get("email_valid", True),
             email_type=response_data.get("email_type")
         )
@@ -650,12 +722,20 @@ class SearchAPI:
             
         Raises:
             ValidationError: If phone number format is invalid
+            InsufficientBalanceError: If account balance is insufficient
             SearchAPIError: For other API errors
         """
+        # Validate phone number format
         self._validate_phone(phone)
         
+        # Ensure phone number is properly formatted (remove any URL encoding)
+        # The API expects +1234567890 format, not %2B1234567890
         formatted_phone = phone.replace('%2B', '+').replace('%2b', '+')
         
+        # Check balance before making request
+        self._check_balance()
+        
+        # Prepare request parameters
         params = {
             "api_key": self.config.api_key,
             "phone": formatted_phone,
@@ -666,8 +746,10 @@ class SearchAPI:
         if include_extra_info:
             params["extra_info"] = "True"
         
+        # Make request using GET method
         response_data = self._make_request(params, method="GET")
         
+        # Parse and return results
         return self._parse_phone_response(phone, response_data)
     
     def _parse_phone_response(self, phone: str, response_data: Dict) -> List[PhoneSearchResult]:
@@ -677,26 +759,28 @@ class SearchAPI:
         if self.config.debug_mode:
             logger.debug(f"Parsing phone response: {response_data}")
         
+        # Check for error response
         if "error" in response_data:
-            error_msg = response_data["error"]
-            if "Invalid phone number format" in error_msg:
-                raise ValidationError(f"Invalid phone number format: {phone}")
-            else:
-                raise SearchAPIError(f"Phone search failed: {error_msg}")
+            raise SearchAPIError(f"Phone search failed: {response_data['error']}")
         
+        # Handle different response formats
         if isinstance(response_data, list):
+            # API returned a list directly
             for result_data in response_data:
                 results.append(self._parse_single_phone_result(phone, result_data))
         elif "results" in response_data and isinstance(response_data["results"], list):
+            # API returned a dictionary with a "results" key
             for result_data in response_data["results"]:
                 results.append(self._parse_single_phone_result(phone, result_data))
         else:
+            # Single result
             results.append(self._parse_single_phone_result(phone, response_data))
         
         return results
     
     def _parse_single_phone_result(self, phone: str, result_data: Dict) -> PhoneSearchResult:
         """Parse single phone search result."""
+        # Parse person information
         person = None
         if "name" in result_data and result_data["name"]:
             person = Person(
@@ -705,6 +789,7 @@ class SearchAPI:
                 age=result_data.get("age")
             )
         
+        # Parse addresses
         addresses = []
         if "addresses" in result_data:
             address_data = result_data["addresses"]
@@ -713,6 +798,7 @@ class SearchAPI:
             else:
                 addresses = [self._parse_address(address_data)]
         
+        # Parse phone numbers
         phone_numbers = []
         if "numbers" in result_data:
             phone_data = result_data["numbers"]
@@ -721,10 +807,13 @@ class SearchAPI:
             else:
                 phone_numbers = [self._parse_phone_number(phone_data, "international")]
         
+        # Parse additional emails
         emails = result_data.get("emails", [])
         
+        # Calculate total results based on actual data found
         total_results = len(addresses) + len(phone_numbers) + len(emails)
         
+        # Create the main phone number for this search
         main_phone = self._parse_phone_number(phone, "international")
         
         return PhoneSearchResult(
@@ -735,7 +824,7 @@ class SearchAPI:
             emails=emails,
             search_timestamp=datetime.now(),
             total_results=total_results,
-            search_cost=0.0025,
+            search_cost=0.0025,  # Phone search cost
         )
     
     def search_domain(self, domain: str) -> DomainSearchResult:
@@ -750,17 +839,25 @@ class SearchAPI:
             
         Raises:
             ValidationError: If domain format is invalid
+            InsufficientBalanceError: If account balance is insufficient
             SearchAPIError: For other API errors
         """
+        # Validate domain format
         self._validate_domain(domain)
         
+        # Check balance before making request
+        self._check_balance()
+        
+        # Prepare request parameters
         params = {
             "api_key": self.config.api_key,
             "domain": domain,
         }
         
+        # Make request using GET method
         response_data = self._make_request(params, method="GET")
         
+        # Parse and return results
         return self._parse_domain_response(domain, response_data)
     
     def _parse_domain_response(self, domain: str, response_data: Dict) -> DomainSearchResult:
@@ -770,39 +867,43 @@ class SearchAPI:
         if self.config.debug_mode:
             logger.debug(f"Parsing domain response: {response_data}")
         
+        # Check for error response
         if "error" in response_data:
-            error_msg = response_data["error"]
-            if "Invalid domain format" in error_msg:
-                raise ValidationError(f"Invalid domain format: {domain}")
-            else:
-                raise SearchAPIError(f"Domain search failed: {error_msg}")
+            raise SearchAPIError(f"Domain search failed: {response_data['error']}")
         
+        # Parse email results
         if isinstance(response_data, list):
+            # API returned a list directly
             for result_data in response_data:
                 email_result = self._parse_single_email_result(result_data)
+                # Update total_results to reflect the actual data found
                 email_result.total_results = len(email_result.addresses) + len(email_result.phone_numbers) + len(email_result.emails)
                 results.append(email_result)
         elif "results" in response_data and isinstance(response_data["results"], list):
+            # API returned a dictionary with results key
             for result_data in response_data["results"]:
                 email_result = self._parse_single_email_result(result_data)
+                # Update total_results to reflect the actual data found
                 email_result.total_results = len(email_result.addresses) + len(email_result.phone_numbers) + len(email_result.emails)
                 results.append(email_result)
         else:
+            # Single result
             email_result = self._parse_single_email_result(response_data)
+            # Update total_results to reflect the actual data found
             email_result.total_results = len(email_result.addresses) + len(email_result.phone_numbers) + len(email_result.emails)
             results.append(email_result)
         
-        total_results = len(results)
-        
         return DomainSearchResult(
             domain=domain,
+            domain_valid=True,
             results=results,
-            total_results=total_results,
-            search_cost=4.00,
+            total_results=len(results),  # Total number of email results found
+            search_cost=4.00  # Domain search cost
         )
     
     def _parse_single_email_result(self, result_data: Dict) -> EmailSearchResult:
         """Parse single email search result."""
+        # Parse person information
         person = None
         if "name" in result_data and result_data["name"]:
             person = Person(
@@ -811,6 +912,7 @@ class SearchAPI:
                 age=result_data.get("age")
             )
         
+        # Parse addresses
         addresses = []
         if "addresses" in result_data:
             address_data = result_data["addresses"]
@@ -819,12 +921,14 @@ class SearchAPI:
             else:
                 addresses = [self._parse_address(address_data)]
         elif "address" in result_data:
+            # Handle the case where address is a single object or list
             address_data = result_data["address"]
             if isinstance(address_data, list):
                 addresses = [self._parse_address(addr) for addr in address_data]
             else:
                 addresses = [self._parse_address(address_data)]
         
+        # Parse phone numbers
         phone_numbers = []
         if "numbers" in result_data:
             phone_data = result_data["numbers"]
@@ -839,6 +943,7 @@ class SearchAPI:
             else:
                 phone_numbers = [self._parse_phone_number(phone_data, "international")]
         
+        # Parse additional emails
         emails = []
         if "emails" in result_data:
             emails = result_data["emails"]
@@ -849,6 +954,7 @@ class SearchAPI:
             else:
                 emails = [email_data]
         
+        # Get the primary email from the result
         primary_email = ""
         if "email" in result_data:
             email_data = result_data["email"]
@@ -864,8 +970,8 @@ class SearchAPI:
             phone_numbers=phone_numbers,
             emails=emails,
             search_timestamp=datetime.now(),
-            total_results=len(addresses) + len(phone_numbers),
-            search_cost=0.0025,
+            total_results=len(addresses) + len(phone_numbers),  # This will be updated by the caller
+            search_cost=0.0025,  # Email search cost
             email_valid=result_data.get("email_valid", True),
             email_type=result_data.get("email_type")
         )

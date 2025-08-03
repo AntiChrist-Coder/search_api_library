@@ -1,20 +1,28 @@
 Metadata-Version: 2.4
 Name: AD-SearchAPI
-Version: 1.0.2
-Summary: A Python client library for the Search API
+Version: 2.0.0
+Summary: A comprehensive Python client library for the Search API with enhanced error handling and balance management
 Home-page: https://github.com/AntiChrist-Coder/search_api_library
 Author: Search API Team
 Author-email: support@search-api.dev
+Project-URL: Bug Reports, https://github.com/AntiChrist-Coder/search_api_library/issues
+Project-URL: Source, https://github.com/AntiChrist-Coder/search_api_library
+Project-URL: Documentation, https://github.com/AntiChrist-Coder/search_api_library/blob/main/README.md
+Keywords: search-api,email-search,phone-search,domain-search,people-search,api-client,balance-management,caching
 Classifier: Development Status :: 5 - Production/Stable
 Classifier: Intended Audience :: Developers
 Classifier: License :: OSI Approved :: MIT License
 Classifier: Programming Language :: Python :: 3
-Classifier: Programming Language :: Python :: 3.7
 Classifier: Programming Language :: Python :: 3.8
 Classifier: Programming Language :: Python :: 3.9
 Classifier: Programming Language :: Python :: 3.10
 Classifier: Programming Language :: Python :: 3.11
-Requires-Python: >=3.7
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Internet :: WWW/HTTP :: Dynamic Content
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Topic :: Communications :: Email
+Classifier: Topic :: Internet :: Name Service (DNS)
+Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 License-File: LICENSE
 Requires-Dist: requests>=2.31.0
@@ -22,133 +30,427 @@ Requires-Dist: phonenumbers>=8.13.0
 Requires-Dist: python-dateutil>=2.8.2
 Requires-Dist: cachetools>=5.3.0
 Requires-Dist: typing-extensions>=4.7.0
+Requires-Dist: urllib3>=2.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: flake8>=6.0.0; extra == "dev"
+Requires-Dist: mypy>=1.0.0; extra == "dev"
+Provides-Extra: brotli
+Requires-Dist: brotli>=1.0.0; extra == "brotli"
 Dynamic: author
 Dynamic: author-email
 Dynamic: classifier
 Dynamic: description
 Dynamic: description-content-type
 Dynamic: home-page
+Dynamic: keywords
 Dynamic: license-file
+Dynamic: project-url
+Dynamic: provides-extra
 Dynamic: requires-dist
 Dynamic: requires-python
 Dynamic: summary
 
-# Search API Python Client
+# Search API Python Client v2.0
 
-A Python client library for the Search API, providing easy access to email, phone, and domain search functionality.
-Acquire your API key through @ADSearchEngine_bot on Telegram.
+A comprehensive Python client library for the Search API with enhanced error handling, balance management, and improved data processing. Acquire your API key through @ADSearchEngine_bot on Telegram.
 
-## Installation
+## 🚀 New in v2.0
 
-    pip install AD-SearchAPI
+- **Enhanced Balance Management**: Automatic balance checking before operations
+- **Access Logs Integration**: Retrieve and analyze API access logs
+- **Improved Error Handling**: Comprehensive exception hierarchy with detailed error messages
+- **Advanced Caching**: Configurable response caching with TTL
+- **Better Data Models**: Enhanced data structures with metadata and cost tracking
+- **Context Manager Support**: Automatic resource cleanup
+- **Comprehensive Validation**: Input validation for all search types
+- **Multiple Phone Formats**: Support for international, national, and E164 formats
+- **Batch Operations**: Efficient handling of multiple searches
+- **Debug Mode**: Detailed logging for troubleshooting
 
-## Quick Start
+## 📦 Installation
 
-    from search_api import SearchAPI
+```bash
+pip install AD-SearchAPI
+```
 
-    # Initialize the client with your API key
-    client = SearchAPI(api_key="your_api_key")
+## ⚡ Quick Start
 
+```python
+from search_api import SearchAPI, InsufficientBalanceError
+
+# Initialize the client
+client = SearchAPI(api_key="your_api_key")
+
+try:
+    # Check balance first
+    balance = client.get_balance()
+    print(f"Current balance: {balance}")
+    print(f"Cost per search: ${balance.credit_cost_per_search}")
+    
+    # Get access logs
+    access_logs = client.get_access_logs()
+    print(f"Total access log entries: {len(access_logs)}")
+    
     # Search by email
-    result = client.search_email("example@domain.com", include_house_value=True, include_extra_info=True, phone_format="international")
-    print(result)
-
-    # Search by phone
-    result = client.search_phone("+1234567890", include_house_value=True, include_extra_info=True, phone_format="international")
-    print(result)
-
-    # Search by domain
-    result = client.search_domain("example.com")
-    print(result)
-
-## Features
-
-- Email search with optional house value, extra info, and phone number formatting
-- Phone number search with validation, formatting, and property details
-- Domain search with comprehensive results
-- Rate limiting and retry handling
-- Type hints and comprehensive documentation
-- Enhanced address model with property details (bedrooms, bathrooms, living area, home status)
-
-## Advanced Usage
-
-### Configuration
-
-    from search_api import SearchAPI, SearchAPIConfig
-
-    config = SearchAPIConfig(
-        api_key="your_api_key",
-        max_retries=3,
-        timeout=30,
-        base_url="https://search-api.dev",
-        debug_mode=False,  # Enable debug logging
-        proxy=None  # Optional proxy configuration
+    result = client.search_email(
+        "example@domain.com",
+        include_house_value=True,
+        include_extra_info=True
     )
+    
+    print(f"Name: {result.person.name if result.person else 'N/A'}")
+    print(f"Total results: {result.total_results}")
+    print(f"Search cost: ${result.search_cost}")
+    
+    for addr in result.addresses:
+        print(f"Address: {addr}")
+        if addr.zestimate:
+            print(f"  Zestimate: ${addr.zestimate:,.2f}")
+    
+except InsufficientBalanceError as e:
+    print(f"Insufficient balance: {e}")
+    print(f"Current: {e.current_balance}, Required: {e.required_credits}")
+```
 
-    client = SearchAPI(config=config)
+## 🔧 Advanced Configuration
 
-### Error Handling
+```python
+from search_api import SearchAPI, SearchAPIConfig
 
-    from search_api.exceptions import SearchAPIError
+config = SearchAPIConfig(
+    api_key="your_api_key",
+    debug_mode=True,           # Enable debug logging
+    enable_caching=True,       # Enable response caching
+    cache_ttl=1800,           # 30 minutes cache
+    max_cache_size=500,       # Maximum cache entries
+    timeout=120,              # 2 minutes timeout
+    max_retries=5,           # Retry failed requests
+    proxy={                   # Optional proxy
+        "http": "http://proxy:8080",
+        "https": "https://proxy:8080"
+    }
+)
 
-    try:
-        result = client.search_email("example@domain.com")
-    except SearchAPIError as e:
-        print(f"Error: {e}")
+client = SearchAPI(config=config)
+```
+
+## 💰 Balance Management
+
+The client automatically checks your account balance before making requests:
+
+```python
+from search_api import InsufficientBalanceError
+
+try:
+    # Get current balance
+    balance = client.get_balance()
+    print(f"Balance: {balance.current_balance} {balance.currency}")
+    print(f"Cost per search: {balance.credit_cost_per_search}")
+    
+    # Check if you have enough for multiple searches
+    required_credits = 10
+    if balance.current_balance < required_credits:
+        print(f"⚠️  Insufficient balance for {required_credits} searches")
+    else:
+        print(f"✅ Sufficient balance for {required_credits} searches")
+        
+except InsufficientBalanceError as e:
+    print(f"❌ Insufficient balance: {e}")
+    print(f"   Current: {e.current_balance}")
+    print(f"   Required: {e.required_credits}")
+```
+
+## 💵 Pricing Information
+
+### Search Costs:
+- **Email Search**: $0.0025 per search
+- **Phone Search**: $0.0025 per search  
+- **Domain Search**: $4.00 per search
+
+### Optional Parameters:
+- **House Value**: Additional $0.0005 per successful lookup
+- **Extra Info**: Additional $0.0020 per successful lookup
+
+## 📊 Access Logs
+
+Retrieve and analyze your API access logs:
+
+```python
+# Get all access logs
+access_logs = client.get_access_logs()
+
+print(f"Total access log entries: {len(access_logs)}")
+
+# Show recent activity
+for log in access_logs[:5]:
+    print(f"IP: {log.ip_address}")
+    print(f"Last accessed: {log.last_accessed}")
+    print(f"Endpoint: {log.endpoint}")
+    print(f"Status: {log.status_code}")
+    print(f"Response time: {log.response_time:.3f}s")
+    print("---")
+
+# Analyze access patterns
+unique_ips = set(log.ip_address for log in access_logs)
+print(f"Unique IP addresses: {len(unique_ips)}")
+
+# Find most active IP
+ip_counts = {}
+for log in access_logs:
+    ip_counts[log.ip_address] = ip_counts.get(log.ip_address, 0) + 1
+
+most_active_ip = max(ip_counts.items(), key=lambda x: x[1])
+print(f"Most active IP: {most_active_ip[0]} ({most_active_ip[1]} accesses)")
+```
+
+## 🔍 Search Operations
+
+### Email Search
+
+```python
+result = client.search_email(
+    "john.doe@example.com",
+    include_house_value=True,
+    include_extra_info=True,
+    phone_format="international"  # or "national", "e164"
+)
+
+print(f"Email: {result.email}")
+print(f"Valid: {result.email_valid}")
+print(f"Type: {result.email_type}")
+print(f"Search Cost: ${result.search_cost}")
+
+if result.person:
+    print(f"Name: {result.person.name}")
+    print(f"DOB: {result.person.dob}")
+    print(f"Age: {result.person.age}")
+
+for addr in result.addresses:
+    print(f"Address: {addr}")
+    if addr.zestimate:
+        print(f"  Zestimate: ${addr.zestimate:,.2f}")
+
+for phone in result.phone_numbers:
+    print(f"Phone: {phone.number}")
+    print(f"  Valid: {phone.is_valid}")
+    print(f"  Type: {phone.phone_type}")
+    print(f"  Carrier: {phone.carrier}")
+```
+
+### Phone Search
+
+```python
+results = client.search_phone(
+    "+1234567890",
+    include_house_value=True,
+    include_extra_info=True,
+    phone_format="international"
+)
+
+for result in results:
+    print(f"Phone: {result.phone.number}")
+    print(f"Valid: {result.phone.is_valid}")
+    print(f"Type: {result.phone.phone_type}")
+    print(f"Carrier: {result.phone.carrier}")
+    print(f"Search Cost: ${result.search_cost}")
+    
+    if result.person:
+        print(f"Name: {result.person.name}")
+        print(f"DOB: {result.person.dob}")
+    
+    print(f"Total results: {result.total_results}")
+```
+
+### Domain Search
+
+```python
+result = client.search_domain("example.com")
+
+print(f"Domain: {result.domain}")
+print(f"Valid: {result.domain_valid}")
+print(f"Total results: {result.total_results}")
+print(f"Search Cost: ${result.search_cost}")
+
+for email_result in result.results:
+    print(f"Email: {email_result.email}")
+    print(f"Valid: {email_result.email_valid}")
+    print(f"Type: {email_result.email_type}")
+    
+    if email_result.person:
+        print(f"Name: {email_result.person.name}")
+```
+
+## 🛡️ Error Handling
+
+The library provides comprehensive error handling with specific exception types:
+
+```python
+from search_api import (
+    SearchAPIError,
+    AuthenticationError,
+    ValidationError,
+    InsufficientBalanceError,
+    RateLimitError,
+    ServerError,
+    NetworkError,
+    TimeoutError,
+    ConfigurationError
+)
+
+try:
+    result = client.search_email("test@example.com")
+except ValidationError as e:
+    print(f"Invalid input: {e}")
+except InsufficientBalanceError as e:
+    print(f"Insufficient balance: {e}")
+    print(f"Current: {e.current_balance}, Required: {e.required_credits}")
+except AuthenticationError as e:
+    print(f"Authentication failed: {e}")
+except RateLimitError as e:
+    print(f"Rate limit exceeded: {e}")
+except ServerError as e:
+    print(f"Server error: {e}")
+except NetworkError as e:
+    print(f"Network error: {e}")
+except TimeoutError as e:
+    print(f"Request timeout: {e}")
+except SearchAPIError as e:
+    print(f"API error: {e}")
+```
+
+## 🔄 Caching
+
+The client supports configurable response caching:
+
+```python
+# Enable caching with custom settings
+config = SearchAPIConfig(
+    api_key="your_api_key",
+    enable_caching=True,
+    cache_ttl=3600,      # 1 hour
+    max_cache_size=1000   # Maximum 1000 cached responses
+)
+
+client = SearchAPI(config=config)
+
+# Cache is automatically used for repeated searches
+result1 = client.search_email("test@example.com")  # Cached
+result2 = client.search_email("test@example.com")  # From cache
+
+# Clear cache when needed
+client.clear_cache()
+```
+
+## 🧹 Context Manager
+
+Use the client as a context manager for automatic resource cleanup:
+
+```python
+with SearchAPI(api_key="your_api_key") as client:
+    balance = client.get_balance()
+    result = client.search_email("test@example.com")
+    # Resources automatically cleaned up when exiting context
+```
+
+## 📊 Data Models
 
 ### Address Model
 
-The `Address` model includes detailed property information when `include_house_value` is enabled:
+```python
+@dataclass
+class Address:
+    street: str
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
+    country: Optional[str] = None
+    zestimate: Optional[Decimal] = None
+    zpid: Optional[str] = None
+    bedrooms: Optional[int] = None
+    bathrooms: Optional[float] = None
+    living_area: Optional[int] = None
+    home_status: Optional[str] = None
+    last_known_date: Optional[date] = None
+```
 
-- `street: str` - Street address
-- `city: Optional[str]` - City name
-- `state: Optional[str]` - State abbreviation
-- `postal_code: Optional[str]` - Postal code
-- `country: Optional[str]` - Country name
-- `zestimate: Optional[Decimal]` - Estimated property value
-- `zpid: Optional[str]` - Zillow Property ID
-- `bedrooms: Optional[int]` - Number of bedrooms
-- `bathrooms: Optional[float]` - Number of bathrooms (supports half-baths)
-- `living_area: Optional[int]` - Square footage
-- `home_status: Optional[str]` - Property status (e.g., "For Sale", "Sold")
+### Person Model
 
-## API Reference
+```python
+@dataclass
+class Person:
+    name: Optional[str] = None
+    dob: Optional[date] = None
+    age: Optional[int] = None
+```
 
-### SearchAPI
+### PhoneNumber Model
 
-Main client class for interacting with the Search API.
+```python
+@dataclass
+class PhoneNumber:
+    number: str
+    country_code: str = "US"
+    is_valid: bool = True
+    phone_type: Optional[str] = None
+    carrier: Optional[str] = None
+```
 
-#### Methods
+### BalanceInfo Model
 
-- `search_email(email: str, include_house_value: bool = False, include_extra_info: bool = False, phone_format: str = "international") -> EmailSearchResult`
-  - Search by email address. Returns an `EmailSearchResult` with name, date of birth, addresses, phone numbers, and optional extra info.
-  - `phone_format`: Use "international" for E.164 format or "local" for national format.
+```python
+@dataclass
+class BalanceInfo:
+    current_balance: float
+    currency: str = "USD"
+    last_updated: Optional[datetime] = None
+    credit_cost_per_search: Optional[float] = None
+```
 
-- `search_phone(phone: str, include_house_value: bool = False, include_extra_info: bool = False, phone_format: str = "international") -> List[PhoneSearchResult]`
-  - Search by phone number. Returns a list of `PhoneSearchResult` objects with name, date of birth, addresses, emails, and optional extra info.
-  - `phone_format`: Use "international" for E.164 format or "local" for national format.
+### AccessLog Model
 
-- `search_domain(domain: str) -> DomainSearchResult`
-  - Search by domain name. Returns a `DomainSearchResult` with a list of associated email results.
+```python
+@dataclass
+class AccessLog:
+    ip_address: str
+    last_accessed: Optional[datetime] = None
+    user_agent: Optional[str] = None
+    endpoint: Optional[str] = None
+    method: Optional[str] = None
+    status_code: Optional[int] = None
+    response_time: Optional[float] = None
+```
+
+## 🔧 Configuration Options
 
 ### SearchAPIConfig
 
-Configuration class for customizing client behavior.
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | str | Required | Your API key |
+| `base_url` | str | `"https://search-api.dev/index.php"` | API base URL |
+| `max_retries` | int | `3` | Maximum retry attempts |
+| `timeout` | int | `90` | Request timeout in seconds |
+| `debug_mode` | bool | `False` | Enable debug logging |
+| `enable_caching` | bool | `True` | Enable response caching |
+| `cache_ttl` | int | `3600` | Cache time-to-live in seconds |
+| `max_cache_size` | int | `1000` | Maximum cache entries |
+| `proxy` | Dict | `None` | Proxy configuration |
+| `user_agent` | str | Chrome UA | Custom user agent |
 
-#### Parameters
+## 📝 Examples
 
-- `api_key: str` - Your API key (required)
-- `cache_ttl: int` - Cache time-to-live in seconds (default: 3600)
-- `max_retries: int` - Maximum number of retry attempts (default: 3)
-- `timeout: int` - Request timeout in seconds (default: 30)
-- `base_url: str` - API base URL (default: "https://search-api.dev")
-- `debug_mode: bool` - Enable debug logging (default: False)
-- `proxy: Optional[Dict]` - Proxy configuration (default: None)
+See the `examples/` directory for comprehensive usage examples:
 
-## Contributing
+- `basic_usage.py` - Basic search operations, balance checking, and access logs
+- `advanced_usage.py` - Advanced features like caching, batch operations, and access log analysis
+
+## 🤝 Contributing
 
 Contributions are welcome! Please submit a Pull Request with your changes or open an issue for discussion.
 
-## License
+## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
