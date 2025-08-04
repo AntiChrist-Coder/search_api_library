@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: AD-SearchAPI
-Version: 2.0.0
+Version: 2.0.1
 Summary: A comprehensive Python client library for the Search API with enhanced error handling and balance management
 Home-page: https://github.com/AntiChrist-Coder/search_api_library
 Author: Search API Team
@@ -59,7 +59,7 @@ A comprehensive Python client library for the Search API with enhanced error han
 
 ## 🚀 New in v2.0
 
-- **Enhanced Balance Management**: Automatic balance checking before operations
+- **Enhanced Balance Management**: Manual balance checking capabilities
 - **Access Logs Integration**: Retrieve and analyze API access logs
 - **Improved Error Handling**: Comprehensive exception hierarchy with detailed error messages
 - **Advanced Caching**: Configurable response caching with TTL
@@ -69,6 +69,8 @@ A comprehensive Python client library for the Search API with enhanced error han
 - **Multiple Phone Formats**: Support for international, national, and E164 formats
 - **Batch Operations**: Efficient handling of multiple searches
 - **Debug Mode**: Detailed logging for troubleshooting
+- **URL Encoding Fix**: Proper handling of phone numbers with + prefix
+- **Response Parsing**: Robust handling of both list and dictionary API responses
 
 ## 📦 Installation
 
@@ -81,20 +83,16 @@ pip install AD-SearchAPI
 ```python
 from search_api import SearchAPI, InsufficientBalanceError
 
-# Initialize the client
 client = SearchAPI(api_key="your_api_key")
 
 try:
-    # Check balance first
     balance = client.get_balance()
     print(f"Current balance: {balance}")
     print(f"Cost per search: ${balance.credit_cost_per_search}")
     
-    # Get access logs
     access_logs = client.get_access_logs()
     print(f"Total access log entries: {len(access_logs)}")
     
-    # Search by email
     result = client.search_email(
         "example@domain.com",
         include_house_value=True,
@@ -139,19 +137,22 @@ client = SearchAPI(config=config)
 
 ## 💰 Balance Management
 
-The client automatically checks your account balance before making requests:
+The client provides balance checking capabilities, but does not automatically check balance before each search. You should check your balance manually when needed:
 
 ```python
 from search_api import InsufficientBalanceError
 
 try:
-    # Get current balance
     balance = client.get_balance()
     print(f"Balance: {balance.current_balance} {balance.currency}")
     print(f"Cost per search: {balance.credit_cost_per_search}")
     
-    # Check if you have enough for multiple searches
-    required_credits = 10
+    # Calculate required credits based on actual search costs
+    email_search_cost = 0.0025
+    phone_search_cost = 0.0025
+    domain_search_cost = 4.00
+    
+    required_credits = 5 * email_search_cost
     if balance.current_balance < required_credits:
         print(f"⚠️  Insufficient balance for {required_credits} searches")
     else:
@@ -235,9 +236,6 @@ for addr in result.addresses:
 
 for phone in result.phone_numbers:
     print(f"Phone: {phone.number}")
-    print(f"  Valid: {phone.is_valid}")
-    print(f"  Type: {phone.phone_type}")
-    print(f"  Carrier: {phone.carrier}")
 ```
 
 ### Phone Search
@@ -252,9 +250,6 @@ results = client.search_phone(
 
 for result in results:
     print(f"Phone: {result.phone.number}")
-    print(f"Valid: {result.phone.is_valid}")
-    print(f"Type: {result.phone.phone_type}")
-    print(f"Carrier: {result.phone.carrier}")
     print(f"Search Cost: ${result.search_cost}")
     
     if result.person:
@@ -430,7 +425,7 @@ class AccessLog:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | str | Required | Your API key |
-| `base_url` | str | `"https://search-api.dev/index.php"` | API base URL |
+| `base_url` | str | `"https://search-api.dev/search.php"` | API base URL |
 | `max_retries` | int | `3` | Maximum retry attempts |
 | `timeout` | int | `90` | Request timeout in seconds |
 | `debug_mode` | bool | `False` | Enable debug logging |

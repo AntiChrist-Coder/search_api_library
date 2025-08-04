@@ -112,9 +112,9 @@ class SearchAPI:
 
         retry_strategy = Retry(
             total=self.config.max_retries,
-            status_forcelist=[429, 500, 502, 503, 504],
+            status_forcelist=[500, 502, 503, 504],
             allowed_methods=["HEAD", "GET", "POST"],
-            backoff_factor=1,
+            backoff_factor=0.5,
         )
         
         adapter = HTTPAdapter(max_retries=retry_strategy)
@@ -305,6 +305,14 @@ class SearchAPI:
         if params is None:
             params = {}
         
+        if self.cache and method == "GET":
+            cache_key = f"{method}:{self.config.base_url}:{sorted(params.items())}"
+            cached_result = self.cache.get(cache_key)
+            if cached_result is not None:
+                if self.config.debug_mode:
+                    logger.debug(f"Returning cached result for: {cache_key}")
+                return cached_result
+        
         try:
             if self.config.debug_mode:
                 logger.debug(f"Making request to {self.config.base_url} with params: {params}")
@@ -353,7 +361,15 @@ class SearchAPI:
                 logger.debug(f"Response headers: {dict(response.headers)}")
             
             if response.status_code == 200:
-                return self._parse_response(response)
+                result = self._parse_response(response)
+                
+                if self.cache and method == "GET":
+                    cache_key = f"{method}:{self.config.base_url}:{sorted(params.items())}"
+                    self.cache[cache_key] = result
+                    if self.config.debug_mode:
+                        logger.debug(f"Cached result for: {cache_key}")
+                
+                return result
             elif response.status_code == 401:
                 raise AuthenticationError("Invalid API key", status_code=401)
             elif response.status_code == 402:
@@ -583,7 +599,20 @@ class SearchAPI:
         
         if "error" in response_data:
             error_msg = response_data["error"]
-            if "Invalid email format" in error_msg:
+            if "No data found" in error_msg:
+                return EmailSearchResult(
+                    email=email,
+                    person=None,
+                    addresses=[],
+                    phone_numbers=[],
+                    emails=[],
+                    search_timestamp=datetime.now(),
+                    total_results=0,
+                    search_cost=0.0025,
+                    email_valid=True,
+                    email_type=None
+                )
+            elif "Invalid email format" in error_msg:
                 raise ValidationError(f"Invalid email format: {email}")
             else:
                 raise SearchAPIError(f"Email search failed: {error_msg}")
@@ -679,7 +708,9 @@ class SearchAPI:
         
         if "error" in response_data:
             error_msg = response_data["error"]
-            if "Invalid phone number format" in error_msg:
+            if "No data found" in error_msg:
+                return []
+            elif "Invalid phone number format" in error_msg:
                 raise ValidationError(f"Invalid phone number format: {phone}")
             else:
                 raise SearchAPIError(f"Phone search failed: {error_msg}")
@@ -772,7 +803,14 @@ class SearchAPI:
         
         if "error" in response_data:
             error_msg = response_data["error"]
-            if "Invalid domain format" in error_msg:
+            if "No data found" in error_msg:
+                return DomainSearchResult(
+                    domain=domain,
+                    results=[],
+                    total_results=0,
+                    search_cost=4.00,
+                )
+            elif "Invalid domain format" in error_msg:
                 raise ValidationError(f"Invalid domain format: {domain}")
             else:
                 raise SearchAPIError(f"Domain search failed: {error_msg}")

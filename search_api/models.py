@@ -268,7 +268,7 @@ class SearchAPIConfig:
     
     api_key: str
     base_url: str = "https://search-api.dev/search.php"
-    max_retries: int = 3
+    max_retries: int = 1  # Reduced from 3 to 1
     timeout: int = 90
     proxy: Optional[Dict[str, str]] = None
     debug_mode: bool = False
