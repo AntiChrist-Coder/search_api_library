@@ -7,7 +7,6 @@ A comprehensive Python client library for the Search API with enhanced error han
 - **Enhanced Balance Management**: Manual balance checking capabilities
 - **Access Logs Integration**: Retrieve and analyze API access logs
 - **Improved Error Handling**: Comprehensive exception hierarchy with detailed error messages
-- **Advanced Caching**: Configurable response caching with TTL
 - **Better Data Models**: Enhanced data structures with metadata and cost tracking
 - **Context Manager Support**: Automatic resource cleanup
 - **Comprehensive Validation**: Input validation for all search types
@@ -40,8 +39,8 @@ try:
     
     result = client.search_email(
         "example@domain.com",
-        include_house_value=True,
-        include_extra_info=True
+        house_value=True,
+        extra_info=True
     )
     
     print(f"Name: {result.person.name if result.person else 'N/A'}")
@@ -66,9 +65,6 @@ from search_api import SearchAPI, SearchAPIConfig
 config = SearchAPIConfig(
     api_key="your_api_key",
     debug_mode=True,           # Enable debug logging
-    enable_caching=True,       # Enable response caching
-    cache_ttl=1800,           # 30 minutes cache
-    max_cache_size=500,       # Maximum cache entries
     timeout=120,              # 2 minutes timeout
     max_retries=5,           # Retry failed requests
     proxy={                   # Optional proxy
@@ -95,7 +91,7 @@ try:
     # Calculate required credits based on actual search costs
     email_search_cost = 0.0025
     phone_search_cost = 0.0025
-    domain_search_cost = 4.00
+    domain_search_cost = 0.0025
     
     required_credits = 5 * email_search_cost
     if balance.current_balance < required_credits:
@@ -114,11 +110,13 @@ except InsufficientBalanceError as e:
 ### Search Costs:
 - **Email Search**: $0.0025 per search
 - **Phone Search**: $0.0025 per search  
-- **Domain Search**: $4.00 per search
+- **Domain Search**: $0.0025 per search
 
 ### Optional Parameters:
-- **House Value**: Additional $0.0005 per successful lookup
-- **Extra Info**: Additional $0.0020 per successful lookup
+- **House Value (Zestimate)**: Additional $0.0015 per successful lookup
+- **Extra Info**: Additional $0.0015 per successful lookup
+- **Carrier Info**: Additional $0.0005 per successful lookup
+- **TLO Enrichment**: Additional $0.0030 per successful lookup
 
 ## 📊 Access Logs
 
@@ -159,8 +157,10 @@ print(f"Most active IP: {most_active_ip[0]} ({most_active_ip[1]} accesses)")
 ```python
 result = client.search_email(
     "john.doe@example.com",
-    include_house_value=True,
-    include_extra_info=True,
+    house_value=True,
+    extra_info=True,
+    carrier_info=True,
+    tlo_enrichment=True,
     phone_format="international"  # or "national", "e164"
 )
 
@@ -168,6 +168,16 @@ print(f"Email: {result.email}")
 print(f"Valid: {result.email_valid}")
 print(f"Type: {result.email_type}")
 print(f"Search Cost: ${result.search_cost}")
+
+# Access detailed pricing breakdown
+if result.pricing:
+    print(f"Pricing Breakdown:")
+    print(f"  Base Search: ${result.pricing.search_cost:.4f}")
+    print(f"  Extra Info: ${result.pricing.extra_info_cost:.4f}")
+    print(f"  Zestimate: ${result.pricing.zestimate_cost:.4f}")
+    print(f"  Carrier: ${result.pricing.carrier_cost:.4f}")
+    print(f"  TLO Enrichment: ${result.pricing.tlo_enrichment_cost:.4f}")
+    print(f"  Total Cost: ${result.pricing.total_cost:.4f}")
 
 if result.person:
     print(f"Name: {result.person.name}")
@@ -188,14 +198,21 @@ for phone in result.phone_numbers:
 ```python
 results = client.search_phone(
     "+1234567890",
-    include_house_value=True,
-    include_extra_info=True,
+    house_value=True,
+    extra_info=True,
+    carrier_info=True,
+    tlo_enrichment=True,
     phone_format="international"
 )
 
 for result in results:
     print(f"Phone: {result.phone.number}")
     print(f"Search Cost: ${result.search_cost}")
+    
+    # Access detailed pricing breakdown
+    if result.pricing:
+        print(f"  Total Cost: ${result.pricing.total_cost:.4f}")
+        print(f"  Breakdown: {result.pricing}")
     
     if result.person:
         print(f"Name: {result.person.name}")
@@ -213,6 +230,10 @@ print(f"Domain: {result.domain}")
 print(f"Valid: {result.domain_valid}")
 print(f"Total results: {result.total_results}")
 print(f"Search Cost: ${result.search_cost}")
+
+# Access detailed pricing breakdown
+if result.pricing:
+    print(f"Pricing: {result.pricing}")
 
 for email_result in result.results:
     print(f"Email: {email_result.email}")
@@ -259,29 +280,6 @@ except TimeoutError as e:
     print(f"Request timeout: {e}")
 except SearchAPIError as e:
     print(f"API error: {e}")
-```
-
-## 🔄 Caching
-
-The client supports configurable response caching:
-
-```python
-# Enable caching with custom settings
-config = SearchAPIConfig(
-    api_key="your_api_key",
-    enable_caching=True,
-    cache_ttl=3600,      # 1 hour
-    max_cache_size=1000   # Maximum 1000 cached responses
-)
-
-client = SearchAPI(config=config)
-
-# Cache is automatically used for repeated searches
-result1 = client.search_email("test@example.com")  # Cached
-result2 = client.search_email("test@example.com")  # From cache
-
-# Clear cache when needed
-client.clear_cache()
 ```
 
 ## 🧹 Context Manager
@@ -371,12 +369,9 @@ class AccessLog:
 |-----------|------|---------|-------------|
 | `api_key` | str | Required | Your API key |
 | `base_url` | str | `"https://search-api.dev/search.php"` | API base URL |
-| `max_retries` | int | `3` | Maximum retry attempts |
+| `max_retries` | int | `1` | Maximum retry attempts |
 | `timeout` | int | `90` | Request timeout in seconds |
 | `debug_mode` | bool | `False` | Enable debug logging |
-| `enable_caching` | bool | `True` | Enable response caching |
-| `cache_ttl` | int | `3600` | Cache time-to-live in seconds |
-| `max_cache_size` | int | `1000` | Maximum cache entries |
 | `proxy` | Dict | `None` | Proxy configuration |
 | `user_agent` | str | Chrome UA | Custom user agent |
 

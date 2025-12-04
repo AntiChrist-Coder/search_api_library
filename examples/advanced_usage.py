@@ -45,13 +45,21 @@ def demonstrate_balance_management(client):
         else:
             print(f"✅ Sufficient balance for 5 email searches")
             
-        # Check for domain search (much more expensive)
-        domain_search_cost = 4.00
+        # Check for domain search
+        domain_search_cost = 0.0025
         if balance.current_balance < domain_search_cost:
             print(f"⚠️  Warning: Insufficient balance for 1 domain search")
-            print(f"   Current: ${balance.current_balance:.4f}, Required: ${domain_search_cost:.2f}")
+            print(f"   Current: ${balance.current_balance:.4f}, Required: ${domain_search_cost:.4f}")
         else:
             print(f"✅ Sufficient balance for 1 domain search")
+            
+        # Check for search with all features enabled
+        max_search_cost = 0.0025 + 0.0015 + 0.0015 + 0.0005 + 0.0030  # base + house + extra + carrier + tlo
+        if balance.current_balance < max_search_cost:
+            print(f"⚠️  Warning: Insufficient balance for search with all features")
+            print(f"   Current: ${balance.current_balance:.4f}, Required: ${max_search_cost:.4f}")
+        else:
+            print(f"✅ Sufficient balance for search with all features")
             
     except Exception as e:
         print(f"❌ Error checking balance: {e}")
@@ -102,46 +110,89 @@ def demonstrate_access_logs(client):
     except Exception as e:
         print(f"❌ Error retrieving access logs: {e}")
 
-def demonstrate_caching(client):
-    """Demonstrate caching functionality."""
+def demonstrate_tlo_enrichment(client):
+    """Demonstrate TLO enrichment features."""
     print("\n" + "="*60)
-    print("CACHING DEMONSTRATION")
+    print("TLO ENRICHMENT DEMONSTRATION")
     print("="*60)
     
     email = "michael.campbell@gmail.com"
     
-    # First search (will be cached)
-    print(f"🔍 First search for {email}...")
-    start_time = datetime.now()
-    result1 = client.search_email(email)
-    time1 = (datetime.now() - start_time).total_seconds()
-    print(f"   Time taken: {time1:.3f}s")
-    print(f"   Results: {result1.total_results}")
-    
-    # Second search (should be from cache)
-    print(f"🔍 Second search for {email} (should be cached)...")
-    start_time = datetime.now()
-    result2 = client.search_email(email)
-    time2 = (datetime.now() - start_time).total_seconds()
-    print(f"   Time taken: {time2:.3f}s")
-    print(f"   Results: {result2.total_results}")
-    
-    if time2 < time1:
-        print("✅ Cache is working (second request was faster)")
-    else:
-        print("⚠️  Cache might not be working as expected")
-    
-    # Clear cache
-    print("🧹 Clearing cache...")
-    client.clear_cache()
-    
-    # Third search (after cache clear)
-    print(f"🔍 Third search for {email} (after cache clear)...")
-    start_time = datetime.now()
-    result3 = client.search_email(email)
-    time3 = (datetime.now() - start_time).total_seconds()
-    print(f"   Time taken: {time3:.3f}s")
-    print(f"   Results: {result3.total_results}")
+    print(f"🔍 Searching for {email} with TLO enrichment...")
+    try:
+        result = client.search_email(
+            email,
+            house_value=True,
+            extra_info=True,
+            carrier_info=True,
+            tlo_enrichment=True
+        )
+        
+        print(f"✅ Search completed")
+        print(f"💰 Total Cost: ${result.search_cost:.4f}")
+        
+        if result.pricing:
+            print(f"\n📊 Cost Breakdown:")
+            print(f"   Base Search: ${result.pricing.search_cost:.4f}")
+            print(f"   Extra Info: ${result.pricing.extra_info_cost:.4f}")
+            print(f"   Zestimate: ${result.pricing.zestimate_cost:.4f}")
+            print(f"   Carrier: ${result.pricing.carrier_cost:.4f}")
+            print(f"   TLO Enrichment: ${result.pricing.tlo_enrichment_cost:.4f}")
+            print(f"   Total: ${result.pricing.total_cost:.4f}")
+        
+        if result.alternative_names:
+            print(f"\n👤 Alternative Names ({len(result.alternative_names)}):")
+            for name in result.alternative_names[:5]:
+                print(f"   - {name}")
+        
+        if result.all_names:
+            print(f"\n👤 All Name Records ({len(result.all_names)}):")
+            for name_record in result.all_names[:3]:
+                print(f"   - {name_record.name}")
+                if name_record.date_first_seen:
+                    print(f"     First seen: {name_record.date_first_seen}")
+        
+        if result.all_dobs:
+            print(f"\n🎂 All DOB Records ({len(result.all_dobs)}):")
+            for dob_record in result.all_dobs:
+                print(f"   - {dob_record.dob} (Age: {dob_record.age})")
+        
+        if result.related_persons:
+            print(f"\n👥 Related Persons ({len(result.related_persons)}):")
+            for person in result.related_persons[:3]:
+                print(f"   - {person.name}")
+                if person.relationship:
+                    print(f"     Relationship: {person.relationship}")
+        
+        if result.criminal_records:
+            print(f"\n⚖️  Criminal Records ({len(result.criminal_records)}):")
+            for record in result.criminal_records:
+                print(f"   - {record.source_name} ({record.source_state})")
+                print(f"     Cases: {len(record.case_numbers)}")
+        
+        if result.phone_numbers_full:
+            print(f"\n📞 Full Phone Details ({len(result.phone_numbers_full)}):")
+            for phone in result.phone_numbers_full[:3]:
+                print(f"   - {phone.number}")
+                if phone.line_type:
+                    print(f"     Type: {phone.line_type}")
+                if phone.carrier:
+                    print(f"     Carrier: {phone.carrier}")
+        
+        if result.censored_numbers:
+            print(f"\n🔒 Censored Numbers ({len(result.censored_numbers)}):")
+            for num in result.censored_numbers[:3]:
+                print(f"   - {num}")
+        
+        if result.addresses_structured:
+            print(f"\n📍 Structured Addresses ({len(result.addresses_structured)}):")
+            for addr in result.addresses_structured[:2]:
+                print(f"   - {addr.address}")
+                if addr.components and addr.components.county:
+                    print(f"     County: {addr.components.county}")
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
 
 def demonstrate_phone_formats(client):
     """Demonstrate different phone number formats."""
@@ -163,6 +214,8 @@ def demonstrate_phone_formats(client):
             for i, result in enumerate(results, 1):
                 print(f"   Result {i}: {result.phone.number}")
                 print(f"   Format: {format_name}")
+                if result.pricing:
+                    print(f"   Cost: ${result.pricing.total_cost:.4f}")
         except Exception as e:
             print(f"   ❌ Error: {e}")
 
@@ -238,28 +291,37 @@ def demonstrate_batch_operations(client):
     print("\n📧 Batch email searches:")
     successful_emails = []
     failed_emails = []
+    total_cost = 0.0
     
     for email in emails:
         try:
-            result = client.search_email(email)
+            result = client.search_email(email, extra_info=True)
             successful_emails.append((email, result))
-            print(f"   ✅ {email}: {result.total_results} results")
+            cost = result.pricing.total_cost if result.pricing else result.search_cost
+            total_cost += cost
+            print(f"   ✅ {email}: {result.total_results} results (${cost:.4f})")
         except Exception as e:
             failed_emails.append((email, e))
             print(f"   ❌ {email}: {e}")
     
     print(f"\n   Summary: {len(successful_emails)} successful, {len(failed_emails)} failed")
+    print(f"   Total Cost: ${total_cost:.4f}")
     
     print("\n📞 Batch phone searches:")
     successful_phones = []
     failed_phones = []
+    total_cost = 0.0
     
     for phone in phones:
         try:
-            results = client.search_phone(phone)
+            results = client.search_phone(phone, carrier_info=True)
             for result in results:
                 print(f"   📱 Phone: {result.phone.number}")
-                print(f"   💰 Search Cost: ${result.search_cost}")
+                cost = result.pricing.total_cost if result.pricing else result.search_cost
+                total_cost += cost
+                print(f"   💰 Search Cost: ${cost:.4f}")
+                if result.pricing:
+                    print(f"      Breakdown: Base=${result.pricing.search_cost:.4f}, Carrier=${result.pricing.carrier_cost:.4f}")
             successful_phones.append((phone, results))
             print(f"   ✅ {phone}: {len(results)} results")
         except Exception as e:
@@ -267,21 +329,26 @@ def demonstrate_batch_operations(client):
             print(f"   ❌ {phone}: {e}")
     
     print(f"\n   Summary: {len(successful_phones)} successful, {len(failed_phones)} failed")
+    print(f"   Total Cost: ${total_cost:.4f}")
     
     print("\n🌐 Batch domain searches:")
     successful_domains = []
     failed_domains = []
+    total_cost = 0.0
     
     for domain in domains:
         try:
             result = client.search_domain(domain)
             successful_domains.append((domain, result))
-            print(f"   ✅ {domain}: {result.total_results} results")
+            cost = result.pricing.total_cost if result.pricing else result.search_cost
+            total_cost += cost
+            print(f"   ✅ {domain}: {result.total_results} results (${cost:.4f})")
         except Exception as e:
             failed_domains.append((domain, e))
             print(f"   ❌ {domain}: {e}")
     
     print(f"\n   Summary: {len(successful_domains)} successful, {len(failed_domains)} failed")
+    print(f"   Total Cost: ${total_cost:.4f}")
 
 def demonstrate_context_manager():
     """Demonstrate context manager usage."""
@@ -292,7 +359,6 @@ def demonstrate_context_manager():
     config = SearchAPIConfig(
         api_key="your-api-key",
         debug_mode=True,
-        enable_caching=True,
     )
     
     print("🔧 Using context manager for automatic resource cleanup...")
@@ -309,9 +375,20 @@ def demonstrate_context_manager():
             access_logs = client.get_access_logs()
             print(f"   📊 Access logs: {len(access_logs)} entries")
             
-            # Perform a search
-            result = client.search_email("michael.campbell@gmail.com")
+            # Perform a search with all features
+            result = client.search_email(
+                "michael.campbell@gmail.com",
+                house_value=True,
+                extra_info=True,
+                carrier_info=True,
+                tlo_enrichment=True
+            )
             print(f"   📧 Search completed: {result.total_results} results")
+            print(f"   💰 Cost: ${result.search_cost:.4f}")
+            
+            if result.pricing:
+                print(f"   💰 Pricing Breakdown: {result.pricing}")
+            
             print("\nPhone Numbers:")
             for i, phone in enumerate(result.phone_numbers, 1):
                 print(f"  {i}. {phone.number}")
@@ -319,6 +396,14 @@ def demonstrate_context_manager():
             print("\nAdditional Emails:")
             for email in result.emails:
                 print(f"  - {email}")
+            
+            # Show TLO enrichment data if available
+            if result.alternative_names:
+                print(f"\nAlternative Names: {len(result.alternative_names)} found")
+            if result.related_persons:
+                print(f"Related Persons: {len(result.related_persons)} found")
+            if result.criminal_records:
+                print(f"Criminal Records: {len(result.criminal_records)} found")
             
         except Exception as e:
             print(f"   ❌ Error during operation: {e}")
@@ -337,9 +422,6 @@ def main():
     config = SearchAPIConfig(
         api_key="your-api-key",
         debug_mode=False,
-        enable_caching=True,
-        cache_ttl=1800,  # 30 minutes
-        max_cache_size=500,
         timeout=120,  # 2 minutes
         max_retries=5,
     )
@@ -350,7 +432,7 @@ def main():
         # Demonstrate various features
         demonstrate_balance_management(client)
         demonstrate_access_logs(client)
-        demonstrate_caching(client)
+        demonstrate_tlo_enrichment(client)
         demonstrate_phone_formats(client)
         demonstrate_error_handling(client)
         demonstrate_batch_operations(client)

@@ -15,7 +15,6 @@ setup(
         "requests>=2.31.0",
         "phonenumbers>=8.13.0",
         "python-dateutil>=2.8.2",
-        "cachetools>=5.3.0",
         "typing-extensions>=4.7.0",
         "urllib3>=2.0.0",
     ],
@@ -45,7 +44,6 @@ setup(
         "people-search",
         "api-client",
         "balance-management",
-        "caching",
     ],
     classifiers=[
         "Development Status :: 5 - Production/Stable",

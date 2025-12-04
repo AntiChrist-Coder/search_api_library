@@ -10,7 +10,6 @@ def main():
     config = SearchAPIConfig(
         api_key="your-api-key",
         debug_mode=False,
-        enable_caching=True,
         timeout=90,
     )
     
@@ -51,8 +50,10 @@ def main():
         
         result = client.search_email(
             "michael.campbell@gmail.com",
-            include_house_value=True,
-            include_extra_info=True,
+            house_value=True,
+            extra_info=True,
+            carrier_info=True,
+            tlo_enrichment=True,
             phone_format="international"
         )
         
@@ -61,26 +62,125 @@ def main():
         print(f"Email Type: {result.email_type}")
         print(f"Search Cost: ${result.search_cost}")
         
+        # Display detailed pricing breakdown
+        if result.pricing:
+            print(f"\n💰 Pricing Breakdown:")
+            print(f"   Base Search: ${result.pricing.search_cost:.4f}")
+            print(f"   Extra Info: ${result.pricing.extra_info_cost:.4f}")
+            print(f"   Zestimate: ${result.pricing.zestimate_cost:.4f}")
+            print(f"   Carrier: ${result.pricing.carrier_cost:.4f}")
+            print(f"   TLO Enrichment: ${result.pricing.tlo_enrichment_cost:.4f}")
+            print(f"   Total: ${result.pricing.total_cost:.4f}")
+        
         if result.person:
-            print(f"Name: {result.person.name}")
+            print(f"\nName: {result.person.name}")
             print(f"DOB: {result.person.dob}")
             print(f"Age: {result.person.age}")
         
-        print(f"Total Results: {result.total_results}")
+        print(f"\nTotal Results: {result.total_results}")
         
-        print("\nAddresses:")
+        print("\n📍 Addresses:")
         for i, addr in enumerate(result.addresses, 1):
             print(f"  {i}. {addr}")
             if addr.zestimate:
                 print(f"     Zestimate: ${addr.zestimate:,.2f}")
         
-        print("\nPhone Numbers:")
+        # Display structured addresses if available
+        if result.addresses_structured:
+            print("\n📍 Structured Addresses:")
+            for i, addr in enumerate(result.addresses_structured, 1):
+                print(f"  {i}. {addr.address}")
+                if addr.components:
+                    comp = addr.components
+                    if comp.city:
+                        print(f"     City: {comp.city}")
+                    if comp.state:
+                        print(f"     State: {comp.state} ({comp.state_code})")
+                    if comp.county:
+                        print(f"     County: {comp.county}")
+                    if comp.zip_code:
+                        print(f"     ZIP: {comp.zip_code}")
+        
+        print("\n📞 Phone Numbers:")
         for i, phone in enumerate(result.phone_numbers, 1):
             print(f"  {i}. {phone.number}")
+            if phone.carrier:
+                print(f"     Carrier: {phone.carrier}")
         
-        print("\nAdditional Emails:")
+        # Display full phone number info if available
+        if result.phone_numbers_full:
+            print("\n📞 Full Phone Number Details:")
+            for i, phone in enumerate(result.phone_numbers_full, 1):
+                print(f"  {i}. {phone.number}")
+                if phone.line_type:
+                    print(f"     Type: {phone.line_type}")
+                if phone.carrier:
+                    print(f"     Carrier: {phone.carrier}")
+                if phone.is_spam_report is not None:
+                    print(f"     Spam Report: {phone.is_spam_report}")
+        
+        # Display censored numbers if available
+        if result.censored_numbers:
+            print("\n🔒 Censored Phone Numbers:")
+            for num in result.censored_numbers:
+                print(f"  - {num}")
+        
+        print("\n📧 Additional Emails:")
         for email in result.emails:
             print(f"  - {email}")
+        
+        # Display other emails if available
+        if result.other_emails:
+            print("\n📧 Other Emails:")
+            for email in result.other_emails:
+                print(f"  - {email}")
+        
+        # Display alternative names if available
+        if result.alternative_names:
+            print("\n👤 Alternative Names:")
+            for name in result.alternative_names:
+                print(f"  - {name}")
+        
+        # Display all names with dates if available
+        if result.all_names:
+            print("\n👤 All Name Records:")
+            for name_record in result.all_names:
+                print(f"  - {name_record.name}")
+                if name_record.first or name_record.last:
+                    print(f"    ({name_record.first} {name_record.middle or ''} {name_record.last})".strip())
+        
+        # Display all DOBs if available
+        if result.all_dobs:
+            print("\n🎂 All Date of Birth Records:")
+            for dob_record in result.all_dobs:
+                print(f"  - {dob_record.dob} (Age: {dob_record.age})")
+        
+        # Display related persons if available
+        if result.related_persons:
+            print("\n👥 Related Persons:")
+            for person in result.related_persons:
+                print(f"  - {person.name}")
+                if person.relationship:
+                    print(f"    Relationship: {person.relationship}")
+                if person.age:
+                    print(f"    Age: {person.age}")
+        
+        # Display criminal records if available
+        if result.criminal_records:
+            print("\n⚖️  Criminal Records:")
+            for record in result.criminal_records:
+                print(f"  Source: {record.source_name} ({record.source_state})")
+                for crime in record.crimes:
+                    if crime.crime_type:
+                        print(f"    Type: {crime.crime_type}")
+                    if crime.court:
+                        print(f"    Court: {crime.court}")
+        
+        # Display confirmed numbers if available
+        if result.confirmed_numbers:
+            print("\n✅ Confirmed Phone Numbers:")
+            for num in result.confirmed_numbers:
+                print(f"  - {num}")
         
         print("\n" + "="*50)
         print("Searching by phone:")
@@ -88,8 +188,10 @@ def main():
         
         phone_results = client.search_phone(
             "+14803658262",
-            include_house_value=False,
-            include_extra_info=False,
+            house_value=True,
+            extra_info=True,
+            carrier_info=True,
+            tlo_enrichment=True,
             phone_format="international"
         )
         
@@ -98,6 +200,10 @@ def main():
             print(f"  Phone: {result.phone.number}")
             print(f"  Search Cost: ${result.search_cost}")
             
+            # Display detailed pricing breakdown
+            if result.pricing:
+                print(f"  💰 Pricing: {result.pricing}")
+            
             if result.person:
                 print(f"  Name: {result.person.name}")
                 print(f"  DOB: {result.person.dob}")
@@ -105,15 +211,39 @@ def main():
             
             print(f"  Total Results: {result.total_results}")
             
-            print("  Addresses:")
+            print("  📍 Addresses:")
             for addr in result.addresses:
                 print(f"    - {addr}")
                 if addr.zestimate:
                     print(f"      Zestimate: ${addr.zestimate:,.2f}")
             
-            print("  Phone Numbers:")
+            # Display structured addresses if available
+            if result.addresses_structured:
+                print("  📍 Structured Addresses:")
+                for addr in result.addresses_structured:
+                    print(f"    - {addr.address}")
+            
+            print("  📞 Phone Numbers:")
             for phone in result.phone_numbers:
                 print(f"    - {phone.number}")
+            
+            # Display TLO enrichment fields if available
+            if result.censored_numbers:
+                print("  🔒 Censored Numbers:")
+                for num in result.censored_numbers:
+                    print(f"    - {num}")
+            
+            if result.alternative_names:
+                print("  👤 Alternative Names:")
+                for name in result.alternative_names:
+                    print(f"    - {name}")
+            
+            if result.related_persons:
+                print("  👥 Related Persons:")
+                for person in result.related_persons:
+                    print(f"    - {person.name}")
+                    if person.relationship:
+                        print(f"      Relationship: {person.relationship}")
         
         print("\n" + "="*50)
         print("Searching by domain:")
@@ -124,6 +254,12 @@ def main():
         print(f"Domain Valid: {domain_result.domain_valid}")
         print(f"Total Results: {domain_result.total_results}")
         print(f"Search Cost: ${domain_result.search_cost}")
+        
+        # Display detailed pricing breakdown
+        if domain_result.pricing:
+            print(f"\n💰 Pricing Breakdown:")
+            print(f"   Base Search: ${domain_result.pricing.search_cost:.4f}")
+            print(f"   Total: ${domain_result.pricing.total_cost:.4f}")
         
         print("\nResults:")
         for i, email_result in enumerate(domain_result.results, 1):

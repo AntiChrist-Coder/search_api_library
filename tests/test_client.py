@@ -35,7 +35,7 @@ class TestSearchAPIConfig:
         """Test valid configuration."""
         config = SearchAPIConfig(api_key="test_key")
         assert config.api_key == "test_key"
-        assert config.max_retries == 3
+        assert config.max_retries == 1  # Default is 1, not 3
         assert config.timeout == 90
     
     def test_invalid_api_key(self):
@@ -306,28 +306,13 @@ class TestSearchAPI:
         assert len(result.results) == 1
         assert result.results[0].email == "user1@example.com"
     
-    def test_clear_cache(self, client):
-        """Test cache clearing."""
-        # Initialize cache
-        client.cache = Mock()
-        client._balance_cache = Mock()
-        client._balance_cache_time = datetime.now()
-        
-        client.clear_cache()
-        
-        client.cache.clear.assert_called_once()
-        assert client._balance_cache is None
-        assert client._balance_cache_time is None
-    
     def test_close(self, client):
         """Test client cleanup."""
         client.session = Mock()
-        client.cache = Mock()
         
         client.close()
         
         client.session.close.assert_called_once()
-        client.cache.clear.assert_called_once()
     
     def test_context_manager(self, client):
         """Test context manager functionality."""
