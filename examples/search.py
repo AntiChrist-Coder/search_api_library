@@ -18,7 +18,7 @@ from search_api.exceptions import (
 api_key = ""  # Set your API key here
 
 # Search Options
-HOUSE_VALUE = False            # Include property value information (Zestimate) (+$0.0015)
+HOUSE_VALUE = True            # Include property value information (Zestimate) (+$0.0015)
 OUTPUT_ALL = False             # Output all results, even empty ones
 EXTRA_INFO = False             # Include additional data enrichment (+$0.0015)
 CARRIER_INFO = False           # Include carrier information (+$0.0005)
