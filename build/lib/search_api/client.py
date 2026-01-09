@@ -600,41 +600,52 @@ class SearchAPI:
                 zpid = address_data.get("zpid")
                 
                 property_details = address_data.get("property_details", {})
-                bedrooms = property_details.get("bedrooms")
-                bathrooms = property_details.get("bathrooms")
-                living_area = property_details.get("living_area")
-                home_status = property_details.get("home_status")
+                if not isinstance(property_details, dict):
+                    property_details = {}
+                
+                bedrooms = property_details.get("bedrooms") if isinstance(property_details, dict) else None
+                bathrooms = property_details.get("bathrooms") if isinstance(property_details, dict) else None
+                living_area = property_details.get("living_area") if isinstance(property_details, dict) else None
+                home_status = property_details.get("home_status") if isinstance(property_details, dict) else None
                 
                 # Check if components exist in property_details or address_data
-                components = property_details.get("components") or address_data.get("components")
+                components = None
+                if isinstance(property_details, dict):
+                    components = property_details.get("components")
+                if not components and isinstance(address_data.get("components"), dict):
+                    components = address_data.get("components")
+                elif not isinstance(components, dict):
+                    components = None
                 
                 return Address(
                     street=self._format_address(street),
-                    city=property_details.get("city") or (components.get("city") if components else None),
-                    state=property_details.get("state") or (components.get("state") if components else None),
-                    postal_code=property_details.get("zipcode") or (components.get("postal_code") if components else None),
-                    country=components.get("country") if components else None,
+                    city=(property_details.get("city") if isinstance(property_details, dict) else None) or (components.get("city") if isinstance(components, dict) and components else None),
+                    state=(property_details.get("state") if isinstance(property_details, dict) else None) or (components.get("state") if isinstance(components, dict) and components else None),
+                    postal_code=(property_details.get("zipcode") if isinstance(property_details, dict) else None) or (components.get("postal_code") if isinstance(components, dict) and components else None),
+                    country=components.get("country") if isinstance(components, dict) and components else None,
                     zestimate=Decimal(str(zestimate)) if zestimate else None,
                     zpid=zpid,
                     bedrooms=bedrooms,
                     bathrooms=bathrooms,
                     living_area=living_area,
                     home_status=home_status,
-                    state_code=components.get("state_code") if components else None,
-                    zip_code=components.get("zip_code") if components else None,
-                    zip4=components.get("zip4") if components else None,
-                    county=components.get("county") if components else None,
+                    state_code=components.get("state_code") if isinstance(components, dict) and components else None,
+                    zip_code=components.get("zip_code") if isinstance(components, dict) and components else None,
+                    zip4=components.get("zip4") if isinstance(components, dict) and components else None,
+                    county=components.get("county") if isinstance(components, dict) and components else None,
                 )
             else:
                 # Check if this is a structured address with components
                 components = address_data.get("components")
+                if not isinstance(components, dict):
+                    components = None
                 
                 return Address(
                     street=self._format_address(address_data.get("street", "")),
-                    city=address_data.get("city") or (components.get("city") if components else None),
-                    state=address_data.get("state") or (components.get("state") if components else None),
-                    postal_code=address_data.get("postal_code") or (components.get("postal_code") if components else None),
-                    country=address_data.get("country") or (components.get("country") if components else None),
+                    city=address_data.get("city") or (components.get("city") if isinstance(components, dict) and components else None),
+                    state=address_data.get("state") or (components.get("state") if isinstance(components, dict) and components else None),
+                    postal_code=address_data.get("postal_code") or (components.get("postal_code") if isinstance(components, dict) and components else None),
+                    country=address_data.get("country") or (components.get("country") if isinstance(components, dict) and components else None),
                     zestimate=Decimal(str(address_data["zestimate"])) if address_data.get("zestimate") else None,
                     zpid=address_data.get("zpid"),
                     bedrooms=address_data.get("bedrooms"),
@@ -642,10 +653,10 @@ class SearchAPI:
                     living_area=address_data.get("living_area"),
                     home_status=address_data.get("home_status"),
                     last_known_date=parse(address_data["last_known"]).date() if address_data.get("last_known") else None,
-                    state_code=address_data.get("state_code") or (components.get("state_code") if components else None),
-                    zip_code=address_data.get("zip_code") or (components.get("zip_code") if components else None),
-                    zip4=address_data.get("zip4") or (components.get("zip4") if components else None),
-                    county=address_data.get("county") or (components.get("county") if components else None),
+                    state_code=address_data.get("state_code") or (components.get("state_code") if isinstance(components, dict) and components else None),
+                    zip_code=address_data.get("zip_code") or (components.get("zip_code") if isinstance(components, dict) and components else None),
+                    zip4=address_data.get("zip4") or (components.get("zip4") if isinstance(components, dict) and components else None),
+                    county=address_data.get("county") or (components.get("county") if isinstance(components, dict) and components else None),
                 )
         
         return Address(street="")
@@ -702,6 +713,9 @@ class SearchAPI:
     
     def _parse_person(self, person_data: Dict[str, Any]) -> Person:
         """Parse person data into Person object."""
+        if not isinstance(person_data, dict):
+            return Person()
+        
         return Person(
             name=person_data.get("name"),
             dob=parse(person_data["dob"]).date() if person_data.get("dob") else None,
@@ -710,6 +724,9 @@ class SearchAPI:
     
     def _parse_structured_address_components(self, components_data: Dict[str, Any]) -> StructuredAddressComponents:
         """Parse structured address components."""
+        if not isinstance(components_data, dict):
+            return StructuredAddressComponents()
+        
         return StructuredAddressComponents(
             formatted_address=components_data.get("formatted_address"),
             street=components_data.get("street"),
@@ -725,9 +742,13 @@ class SearchAPI:
     
     def _parse_structured_address(self, addr_data: Dict[str, Any]) -> StructuredAddress:
         """Parse structured address."""
+        if not isinstance(addr_data, dict):
+            return StructuredAddress(address="")
+        
         components = None
         if "components" in addr_data and addr_data["components"]:
-            components = self._parse_structured_address_components(addr_data["components"])
+            if isinstance(addr_data["components"], dict):
+                components = self._parse_structured_address_components(addr_data["components"])
         
         return StructuredAddress(
             address=addr_data.get("address", ""),
@@ -736,6 +757,9 @@ class SearchAPI:
     
     def _parse_name_record(self, name_data: Dict[str, Any]) -> NameRecord:
         """Parse name record."""
+        if not isinstance(name_data, dict):
+            return NameRecord(name="")
+        
         return NameRecord(
             name=name_data.get("name", ""),
             first=name_data.get("first"),
@@ -747,6 +771,9 @@ class SearchAPI:
     
     def _parse_dob_record(self, dob_data: Dict[str, Any]) -> DOBRecord:
         """Parse DOB record."""
+        if not isinstance(dob_data, dict):
+            return DOBRecord(dob="")
+        
         return DOBRecord(
             dob=dob_data.get("dob", ""),
             age=dob_data.get("age"),
@@ -755,6 +782,9 @@ class SearchAPI:
     
     def _parse_related_person(self, person_data: Dict[str, Any]) -> RelatedPerson:
         """Parse related person."""
+        if not isinstance(person_data, dict):
+            return RelatedPerson(name="")
+        
         return RelatedPerson(
             name=person_data.get("name", ""),
             dob=person_data.get("dob"),
@@ -766,6 +796,9 @@ class SearchAPI:
     
     def _parse_crime(self, crime_data: Dict[str, Any]) -> Crime:
         """Parse crime information."""
+        if not isinstance(crime_data, dict):
+            return Crime()
+        
         return Crime(
             case_number=crime_data.get("case_number"),
             crime_type=crime_data.get("crime_type"),
@@ -780,6 +813,9 @@ class SearchAPI:
     
     def _parse_criminal_record(self, record_data: Dict[str, Any]) -> CriminalRecord:
         """Parse criminal record."""
+        if not isinstance(record_data, dict):
+            return CriminalRecord(source_name="")
+        
         crimes = []
         if "crimes" in record_data and isinstance(record_data["crimes"], list):
             crimes = [self._parse_crime(crime) for crime in record_data["crimes"]]
@@ -793,6 +829,9 @@ class SearchAPI:
     
     def _parse_phone_number_full(self, phone_data: Dict[str, Any]) -> PhoneNumberFull:
         """Parse full phone number information."""
+        if not isinstance(phone_data, dict):
+            return PhoneNumberFull(number="")
+        
         return PhoneNumberFull(
             number=phone_data.get("number", ""),
             line_type=phone_data.get("line_type"),
@@ -932,15 +971,16 @@ class SearchAPI:
                 search_cost = 0.0025
                 if "_pricing" in response_data:
                     pricing_data = response_data["_pricing"]
-                    pricing_info = PricingInfo(
-                        search_cost=pricing_data.get("search_cost", 0.0025),
-                        extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
-                        zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
-                        carrier_cost=pricing_data.get("carrier_cost", 0.0),
-                        tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
-                        total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
-                    )
-                    search_cost = pricing_info.total_cost
+                    if isinstance(pricing_data, dict):
+                        pricing_info = PricingInfo(
+                            search_cost=pricing_data.get("search_cost", 0.0025),
+                            extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
+                            zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
+                            carrier_cost=pricing_data.get("carrier_cost", 0.0),
+                            tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
+                            total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
+                        )
+                        search_cost = pricing_info.total_cost
                 
                 return EmailSearchResult(
                     email=email,
@@ -995,37 +1035,72 @@ class SearchAPI:
         
         # Parse TLO enrichment fields
         censored_numbers = response_data.get("censored_numbers", [])
+        if not isinstance(censored_numbers, list):
+            censored_numbers = []
+        
         addresses_structured = []
         if "addresses_structured" in response_data:
-            for addr_data in response_data["addresses_structured"]:
-                addresses_structured.append(self._parse_structured_address(addr_data))
+            addr_structured_data = response_data["addresses_structured"]
+            if isinstance(addr_structured_data, list):
+                for addr_data in addr_structured_data:
+                    if isinstance(addr_data, dict):
+                        addresses_structured.append(self._parse_structured_address(addr_data))
+            elif isinstance(addr_structured_data, dict):
+                addresses_structured.append(self._parse_structured_address(addr_structured_data))
         
         alternative_names = response_data.get("alternative_names", [])
+        if not isinstance(alternative_names, list):
+            alternative_names = []
         
         all_names = []
         if "all_names" in response_data:
-            for name_data in response_data["all_names"]:
-                all_names.append(self._parse_name_record(name_data))
+            names_data = response_data["all_names"]
+            if isinstance(names_data, list):
+                for name_data in names_data:
+                    if isinstance(name_data, dict):
+                        all_names.append(self._parse_name_record(name_data))
+            elif isinstance(names_data, dict):
+                all_names.append(self._parse_name_record(names_data))
         
         all_dobs = []
         if "all_dobs" in response_data:
-            for dob_data in response_data["all_dobs"]:
-                all_dobs.append(self._parse_dob_record(dob_data))
+            dobs_data = response_data["all_dobs"]
+            if isinstance(dobs_data, list):
+                for dob_data in dobs_data:
+                    if isinstance(dob_data, dict):
+                        all_dobs.append(self._parse_dob_record(dob_data))
+            elif isinstance(dobs_data, dict):
+                all_dobs.append(self._parse_dob_record(dobs_data))
         
         related_persons = []
         if "related_persons" in response_data:
-            for person_data in response_data["related_persons"]:
-                related_persons.append(self._parse_related_person(person_data))
+            persons_data = response_data["related_persons"]
+            if isinstance(persons_data, list):
+                for person_data in persons_data:
+                    if isinstance(person_data, dict):
+                        related_persons.append(self._parse_related_person(person_data))
+            elif isinstance(persons_data, dict):
+                related_persons.append(self._parse_related_person(persons_data))
         
         criminal_records = []
         if "criminal_records" in response_data:
-            for record_data in response_data["criminal_records"]:
-                criminal_records.append(self._parse_criminal_record(record_data))
+            records_data = response_data["criminal_records"]
+            if isinstance(records_data, list):
+                for record_data in records_data:
+                    if isinstance(record_data, dict):
+                        criminal_records.append(self._parse_criminal_record(record_data))
+            elif isinstance(records_data, dict):
+                criminal_records.append(self._parse_criminal_record(records_data))
         
         phone_numbers_full = []
         if "phone_numbers_full" in response_data:
-            for phone_data in response_data["phone_numbers_full"]:
-                phone_numbers_full.append(self._parse_phone_number_full(phone_data))
+            phones_data = response_data["phone_numbers_full"]
+            if isinstance(phones_data, list):
+                for phone_data in phones_data:
+                    if isinstance(phone_data, dict):
+                        phone_numbers_full.append(self._parse_phone_number_full(phone_data))
+            elif isinstance(phones_data, dict):
+                phone_numbers_full.append(self._parse_phone_number_full(phones_data))
         
         other_emails = response_data.get("other_emails", [])
         confirmed_numbers = response_data.get("confirmed_numbers", [])
@@ -1035,15 +1110,16 @@ class SearchAPI:
         pricing_info = None
         if "_pricing" in response_data:
             pricing_data = response_data["_pricing"]
-            pricing_info = PricingInfo(
-                search_cost=pricing_data.get("search_cost", 0.0025),
-                extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
-                zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
-                carrier_cost=pricing_data.get("carrier_cost", 0.0),
-                tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
-                total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
-            )
-            search_cost = pricing_info.total_cost
+            if isinstance(pricing_data, dict):
+                pricing_info = PricingInfo(
+                    search_cost=pricing_data.get("search_cost", 0.0025),
+                    extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
+                    zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
+                    carrier_cost=pricing_data.get("carrier_cost", 0.0),
+                    tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
+                    total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
+                )
+                search_cost = pricing_info.total_cost
         
         # Get total_results from pagination if available, otherwise calculate
         # Count all data fields including TLO enrichment fields
@@ -1186,15 +1262,16 @@ class SearchAPI:
         pricing_info = None
         if "_pricing" in response_data:
             pricing_data = response_data["_pricing"]
-            pricing_info = PricingInfo(
-                search_cost=pricing_data.get("search_cost", 0.0025),
-                extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
-                zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
-                carrier_cost=pricing_data.get("carrier_cost", 0.0),
-                tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
-                total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
-            )
-            default_cost = pricing_info.total_cost
+            if isinstance(pricing_data, dict):
+                pricing_info = PricingInfo(
+                    search_cost=pricing_data.get("search_cost", 0.0025),
+                    extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
+                    zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
+                    carrier_cost=pricing_data.get("carrier_cost", 0.0),
+                    tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
+                    total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
+                )
+                default_cost = pricing_info.total_cost
         
         if isinstance(response_data, list):
             for result_data in response_data:
@@ -1246,37 +1323,72 @@ class SearchAPI:
         
         # Parse TLO enrichment fields
         censored_numbers = result_data.get("censored_numbers", [])
+        if not isinstance(censored_numbers, list):
+            censored_numbers = []
+        
         addresses_structured = []
         if "addresses_structured" in result_data:
-            for addr_data in result_data["addresses_structured"]:
-                addresses_structured.append(self._parse_structured_address(addr_data))
+            addr_structured_data = result_data["addresses_structured"]
+            if isinstance(addr_structured_data, list):
+                for addr_data in addr_structured_data:
+                    if isinstance(addr_data, dict):
+                        addresses_structured.append(self._parse_structured_address(addr_data))
+            elif isinstance(addr_structured_data, dict):
+                addresses_structured.append(self._parse_structured_address(addr_structured_data))
         
         alternative_names = result_data.get("alternative_names", [])
+        if not isinstance(alternative_names, list):
+            alternative_names = []
         
         all_names = []
         if "all_names" in result_data:
-            for name_data in result_data["all_names"]:
-                all_names.append(self._parse_name_record(name_data))
+            names_data = result_data["all_names"]
+            if isinstance(names_data, list):
+                for name_data in names_data:
+                    if isinstance(name_data, dict):
+                        all_names.append(self._parse_name_record(name_data))
+            elif isinstance(names_data, dict):
+                all_names.append(self._parse_name_record(names_data))
         
         all_dobs = []
         if "all_dobs" in result_data:
-            for dob_data in result_data["all_dobs"]:
-                all_dobs.append(self._parse_dob_record(dob_data))
+            dobs_data = result_data["all_dobs"]
+            if isinstance(dobs_data, list):
+                for dob_data in dobs_data:
+                    if isinstance(dob_data, dict):
+                        all_dobs.append(self._parse_dob_record(dob_data))
+            elif isinstance(dobs_data, dict):
+                all_dobs.append(self._parse_dob_record(dobs_data))
         
         related_persons = []
         if "related_persons" in result_data:
-            for person_data in result_data["related_persons"]:
-                related_persons.append(self._parse_related_person(person_data))
+            persons_data = result_data["related_persons"]
+            if isinstance(persons_data, list):
+                for person_data in persons_data:
+                    if isinstance(person_data, dict):
+                        related_persons.append(self._parse_related_person(person_data))
+            elif isinstance(persons_data, dict):
+                related_persons.append(self._parse_related_person(persons_data))
         
         criminal_records = []
         if "criminal_records" in result_data:
-            for record_data in result_data["criminal_records"]:
-                criminal_records.append(self._parse_criminal_record(record_data))
+            records_data = result_data["criminal_records"]
+            if isinstance(records_data, list):
+                for record_data in records_data:
+                    if isinstance(record_data, dict):
+                        criminal_records.append(self._parse_criminal_record(record_data))
+            elif isinstance(records_data, dict):
+                criminal_records.append(self._parse_criminal_record(records_data))
         
         phone_numbers_full = []
         if "phone_numbers_full" in result_data:
-            for phone_data in result_data["phone_numbers_full"]:
-                phone_numbers_full.append(self._parse_phone_number_full(phone_data))
+            phones_data = result_data["phone_numbers_full"]
+            if isinstance(phones_data, list):
+                for phone_data in phones_data:
+                    if isinstance(phone_data, dict):
+                        phone_numbers_full.append(self._parse_phone_number_full(phone_data))
+            elif isinstance(phones_data, dict):
+                phone_numbers_full.append(self._parse_phone_number_full(phones_data))
         
         other_emails = result_data.get("other_emails", [])
         confirmed_numbers = result_data.get("confirmed_numbers", [])
@@ -1344,21 +1456,23 @@ class SearchAPI:
             search_cost = 0.0025
             if "_pricing" in response_data:
                 pricing = response_data["_pricing"]
-                search_cost = pricing.get("total_cost", pricing.get("search_cost", 0.0025))
+                if isinstance(pricing, dict):
+                    search_cost = pricing.get("total_cost", pricing.get("search_cost", 0.0025))
             
             if "No data found" in error_msg:
                 pricing_info = None
                 if "_pricing" in response_data:
                     pricing_data = response_data["_pricing"]
-                    pricing_info = PricingInfo(
-                        search_cost=pricing_data.get("search_cost", 0.0025),
-                        extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
-                        zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
-                        carrier_cost=pricing_data.get("carrier_cost", 0.0),
-                        tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
-                        total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
-                    )
-                    search_cost = pricing_info.total_cost
+                    if isinstance(pricing_data, dict):
+                        pricing_info = PricingInfo(
+                            search_cost=pricing_data.get("search_cost", 0.0025),
+                            extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
+                            zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
+                            carrier_cost=pricing_data.get("carrier_cost", 0.0),
+                            tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
+                            total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
+                        )
+                        search_cost = pricing_info.total_cost
                 
                 return DomainSearchResult(
                     domain=domain,
@@ -1376,15 +1490,16 @@ class SearchAPI:
         pricing_info = None
         if "_pricing" in response_data:
             pricing_data = response_data["_pricing"]
-            pricing_info = PricingInfo(
-                search_cost=pricing_data.get("search_cost", 0.0025),
-                extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
-                zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
-                carrier_cost=pricing_data.get("carrier_cost", 0.0),
-                tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
-                total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
-            )
-            search_cost = pricing_info.total_cost
+            if isinstance(pricing_data, dict):
+                pricing_info = PricingInfo(
+                    search_cost=pricing_data.get("search_cost", 0.0025),
+                    extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
+                    zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
+                    carrier_cost=pricing_data.get("carrier_cost", 0.0),
+                    tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
+                    total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
+                )
+                search_cost = pricing_info.total_cost
         
         if isinstance(response_data, list):
             for result_data in response_data:

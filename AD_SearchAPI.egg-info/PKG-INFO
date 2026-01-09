@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: AD-SearchAPI
-Version: 2.0.1
+Version: 2.0.2
 Summary: A comprehensive Python client library for the Search API with enhanced error handling and balance management
 Home-page: https://github.com/AntiChrist-Coder/search_api_library
 Author: Search API Team
