@@ -15,6 +15,11 @@ A comprehensive Python client library for the Search API with enhanced error han
 - **Debug Mode**: Detailed logging for troubleshooting
 - **URL Encoding Fix**: Proper handling of phone numbers with + prefix
 - **Response Parsing**: Robust handling of both list and dictionary API responses
+- **Phone Recovery Verification**: Email search option via `recovery_check`, `recovery_modules`; retrieve available modules with `get_recovery_modules()`
+- **Company Search**: `search_company(company, country=..., page=..., limit=...)` returns `CompanySearchResult` (same shape as domain)
+- **Usage & Cache Stats**: `get_usage_stats()`, `get_cache_stats()`, `get_access_logs(limit=...)` with full response models
+- **Pricing & Recovery**: `PricingInfo.recovery_check_cost`, `EmailSearchResult.recovery_check` (`RecoveryCheckResult`), `RecoveryModule`, `RecoveryModulesResponse`, `UsageStats`
+- **Rich result data**: All search result types can include TLO/enrichment: `addresses_structured`, `all_names`, `all_dobs`, `related_persons`, `criminal_records`, `phone_numbers_full`, `censored_numbers`, `confirmed_numbers`, `other_emails`, `alternative_names`
 
 ## 📦 Installation
 
@@ -116,15 +121,16 @@ except InsufficientBalanceError as e:
 - **House Value (Zestimate)**: Additional $0.0015 per successful lookup
 - **Extra Info**: Additional $0.0015 per successful lookup
 - **Carrier Info**: Additional $0.0005 per successful lookup
-- **TLO Enrichment**: Additional $0.0030 per successful lookup
+- **TLO Enrichment**: Additional $0.0025 per successful lookup
+- **Phone Recovery Verification**: Variable per module ($0.001–$0.003); only for email search
 
-## 📊 Access Logs
+## 📊 Access Logs & Usage
 
-Retrieve and analyze your API access logs:
+Retrieve access logs (optional limit), usage stats, and cache stats:
 
 ```python
-# Get all access logs
-access_logs = client.get_access_logs()
+# Get access logs (optional limit, default 100, max 1000)
+access_logs = client.get_access_logs(limit=50)
 
 print(f"Total access log entries: {len(access_logs)}")
 
@@ -132,10 +138,23 @@ print(f"Total access log entries: {len(access_logs)}")
 for log in access_logs[:5]:
     print(f"IP: {log.ip_address}")
     print(f"Last accessed: {log.last_accessed}")
-    print(f"Endpoint: {log.endpoint}")
-    print(f"Status: {log.status_code}")
-    print(f"Response time: {log.response_time:.3f}s")
+    print(f"Search type: {log.search_type}, Cost: {log.search_cost}")
     print("---")
+
+# Usage statistics (today and total)
+stats = client.get_usage_stats()
+print(f"Today: {stats.today_searches} searches, ${stats.today_cost:.4f}")
+print(f"Total: {stats.total_searches} searches, ${stats.total_cost:.4f}")
+
+# Cache statistics
+cache_stats = client.get_cache_stats()
+print("Cache:", cache_stats)
+
+# Available recovery modules (for email recovery verification)
+recovery = client.get_recovery_modules()
+print("Recovery modules:", [m.module_name for m in recovery.modules])
+print("Pricing:", recovery.pricing)
+# Use in search_email(..., recovery_check=True, recovery_modules={"module_order": [...], "enabled_modules": [...]})
 
 # Analyze access patterns
 unique_ips = set(log.ip_address for log in access_logs)
@@ -161,6 +180,8 @@ result = client.search_email(
     extra_info=True,
     carrier_info=True,
     tlo_enrichment=True,
+    recovery_check=True,  # Phone Recovery Verification (email only)
+    recovery_modules={"module_order": ["yahoo", "outlook"], "enabled_modules": ["yahoo", "outlook"]},  # optional
     phone_format="international"  # or "national", "e164"
 )
 
@@ -177,7 +198,15 @@ if result.pricing:
     print(f"  Zestimate: ${result.pricing.zestimate_cost:.4f}")
     print(f"  Carrier: ${result.pricing.carrier_cost:.4f}")
     print(f"  TLO Enrichment: ${result.pricing.tlo_enrichment_cost:.4f}")
+    if result.pricing.recovery_check_cost:
+        print(f"  Recovery Check: ${result.pricing.recovery_check_cost:.4f}")
     print(f"  Total Cost: ${result.pricing.total_cost:.4f}")
+
+# Phone Recovery Verification result (when recovery_check=True)
+if result.recovery_check:
+    print(f"Recovery matched: {result.recovery_check.matched}")
+    print(f"Matched number: {result.recovery_check.matched_number}")
+    print(f"Modules used: {result.recovery_check.modules_used}")
 
 if result.person:
     print(f"Name: {result.person.name}")
@@ -224,24 +253,40 @@ for result in results:
 ### Domain Search
 
 ```python
-result = client.search_domain("example.com")
+result = client.search_domain("example.com", page=1, limit=100)
 
 print(f"Domain: {result.domain}")
 print(f"Valid: {result.domain_valid}")
 print(f"Total results: {result.total_results}")
 print(f"Search Cost: ${result.search_cost}")
-
-# Access detailed pricing breakdown
-if result.pricing:
-    print(f"Pricing: {result.pricing}")
+if result.pagination:
+    print(f"Pagination: {result.pagination}")
 
 for email_result in result.results:
     print(f"Email: {email_result.email}")
-    print(f"Valid: {email_result.email_valid}")
-    print(f"Type: {email_result.email_type}")
-    
     if email_result.person:
         print(f"Name: {email_result.person.name}")
+    # Each result can include TLO/enrichment: addresses_structured, all_names, all_dobs,
+    # related_persons, criminal_records, phone_numbers_full, censored_numbers, confirmed_numbers, etc.
+```
+
+### Company Search
+
+```python
+result = client.search_company("Acme Corp", country="US", page=1, limit=100)
+
+print(f"Company: {result.company}")
+print(f"Total results: {result.total_results}")
+print(f"Search Cost: ${result.search_cost}")
+if result.country:
+    print(f"Country filter: {result.country}")
+
+for contact in result.results:
+    if contact.person:
+        print(f"Name: {contact.person.name}")
+    print(f"Emails: {contact.emails}")
+    print(f"Phones: {[p.number for p in contact.phone_numbers]}")
+    # Same rich fields as domain/email: addresses_structured, related_persons, etc.
 ```
 
 ## 🛡️ Error Handling
@@ -379,8 +424,9 @@ class AccessLog:
 
 See the `examples/` directory for comprehensive usage examples:
 
-- `basic_usage.py` - Basic search operations, balance checking, and access logs
-- `advanced_usage.py` - Advanced features like caching, batch operations, and access log analysis
+- **basic_usage.py** – Balance, access logs (with limit), usage stats, cache stats, recovery modules; email search (with recovery_check, extra-info fields: gender, companies, education, LinkedIn, social); phone search; company search; domain search (page/limit); error handling.
+- **advanced_usage.py** – Balance management, access logs with search_type/cost, usage/cache stats, recovery modules, TLO and extra-info display (gender, location_metro, companies, industry, LinkedIn, social, education), phone formats, error handling, batch email/phone/domain/company, context manager.
+- **search.py** – Bulk email search from file with configurable options: HOUSE_VALUE, EXTRA_INFO, CARRIER_INFO, TLO_ENRICHMENT, RECOVERY_CHECK, RECOVERY_MODULES; configurable output fields including gender, location_metro, companies, industry, linkedin, social_media, education, recovery_check.
 
 ## 🤝 Contributing
 

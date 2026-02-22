@@ -32,6 +32,59 @@ class SearchType(Enum):
 
 
 @dataclass
+class RecoveryCheckResult:
+    """Result of Phone Recovery Verification (email search only)."""
+    matched: bool = False
+    matched_number: Optional[str] = None
+    matched_module: Optional[str] = None
+    modules_used: List[str] = field(default_factory=list)
+    cost: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "matched": self.matched,
+            "matched_number": self.matched_number,
+            "matched_module": self.matched_module,
+            "modules_used": self.modules_used,
+            "cost": self.cost,
+        }
+
+
+@dataclass
+class RecoveryModule:
+    """Available recovery check module (e.g. yahoo, outlook, icloud)."""
+    module_name: str
+    price: float = 0.0
+    display_name: Optional[str] = None
+    description: Optional[str] = None
+    raw: Optional[Dict[str, Any]] = None  # full payload from API
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "module_name": self.module_name,
+            "price": self.price,
+            "display_name": self.display_name,
+            "description": self.description,
+        }
+
+
+@dataclass
+class RecoveryModulesResponse:
+    """Response from get_recovery_modules: list of modules and pricing map."""
+    modules: List[RecoveryModule] = field(default_factory=list)
+    pricing: Dict[str, float] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "modules": [m.to_dict() for m in self.modules],
+            "pricing": self.pricing,
+        }
+
+
+@dataclass
 class StructuredAddressComponents:
     """Components of a structured address."""
     
@@ -319,6 +372,41 @@ class CriminalRecord:
         }
 
 
+@dataclass
+class CompanyInfo:
+    """Company / employment info (extra_info enrichment)."""
+    company_name: str
+    position: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"company_name": self.company_name, "position": self.position}
+
+
+@dataclass
+class SocialMediaIdentifier:
+    """Social media profile (platform + identifier URL)."""
+    platform: str
+    identifier: str
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"platform": self.platform, "identifier": self.identifier}
+
+
+@dataclass
+class EducationEntry:
+    """Education record (school + dates)."""
+    school_name: str
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "school_name": self.school_name,
+            "start_date": self.start_date,
+            "end_date": self.end_date,
+        }
+
+
 @_dataclass_with_slots
 class Person:
     """Represents a person with their associated information."""
@@ -326,6 +414,7 @@ class Person:
     name: Optional[str] = None
     dob: Optional[date] = None
     age: Optional[int] = None
+    gender: Optional[str] = None
     
     def __str__(self) -> str:
         if self.name:
@@ -338,6 +427,7 @@ class Person:
             "name": self.name,
             "dob": self.dob.isoformat() if self.dob else None,
             "age": self.age,
+            "gender": self.gender,
         }
 
 
@@ -350,10 +440,16 @@ class PricingInfo:
     zestimate_cost: float = 0.0
     carrier_cost: float = 0.0
     tlo_enrichment_cost: float = 0.0
+    recovery_check_cost: float = 0.0
     total_cost: float = 0.0
     
     def __str__(self) -> str:
-        return f"Total: ${self.total_cost:.4f} (Base: ${self.search_cost:.4f}, Extra: ${self.extra_info_cost:.4f}, Zestimate: ${self.zestimate_cost:.4f}, Carrier: ${self.carrier_cost:.4f}, TLO: ${self.tlo_enrichment_cost:.4f})"
+        parts = [f"Base: ${self.search_cost:.4f}", f"Extra: ${self.extra_info_cost:.4f}",
+                 f"Zestimate: ${self.zestimate_cost:.4f}", f"Carrier: ${self.carrier_cost:.4f}",
+                 f"TLO: ${self.tlo_enrichment_cost:.4f}"]
+        if self.recovery_check_cost:
+            parts.append(f"Recovery: ${self.recovery_check_cost:.4f}")
+        return f"Total: ${self.total_cost:.4f} (" + ", ".join(parts) + ")"
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -363,6 +459,7 @@ class PricingInfo:
             "zestimate_cost": self.zestimate_cost,
             "carrier_cost": self.carrier_cost,
             "tlo_enrichment_cost": self.tlo_enrichment_cost,
+            "recovery_check_cost": self.recovery_check_cost,
             "total_cost": self.total_cost,
         }
 
@@ -378,6 +475,8 @@ class AccessLog:
     method: Optional[str] = None
     status_code: Optional[int] = None
     response_time: Optional[float] = None
+    search_type: Optional[str] = None
+    search_cost: Optional[float] = None
     
     def __str__(self) -> str:
         return f"{self.ip_address} - {self.last_accessed}"
@@ -392,6 +491,24 @@ class AccessLog:
             "method": self.method,
             "status_code": self.status_code,
             "response_time": self.response_time,
+            "search_type": self.search_type,
+            "search_cost": self.search_cost,
+        }
+
+
+@dataclass
+class UsageStats:
+    """Usage statistics (today and total)."""
+    today_searches: int = 0
+    today_cost: float = 0.0
+    total_searches: int = 0
+    total_cost: float = 0.0
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "today": {"searches": self.today_searches, "cost": self.today_cost},
+            "total": {"searches": self.total_searches, "cost": self.total_cost},
         }
 
 
@@ -418,6 +535,19 @@ class BaseSearchResult:
     phone_numbers_full: List[PhoneNumberFull] = field(default_factory=list)
     other_emails: List[str] = field(default_factory=list)
     confirmed_numbers: List[str] = field(default_factory=list)
+    # Extra-info enrichment fields
+    location_metro: Optional[str] = None
+    companies: List[CompanyInfo] = field(default_factory=list)
+    industry: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    linkedin_id: Optional[str] = None
+    social_media_identifiers: List[SocialMediaIdentifier] = field(default_factory=list)
+    education: List[EducationEntry] = field(default_factory=list)
+    # Response metadata (from _successful_* and pagination)
+    successful_zestimates: Optional[int] = None
+    successful_extra_info: Optional[int] = None
+    successful_carriers: Optional[int] = None
+    pagination: Optional[Dict[str, Any]] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert search result to dictionary."""
@@ -440,6 +570,17 @@ class BaseSearchResult:
             "phone_numbers_full": [phone.to_dict() for phone in self.phone_numbers_full],
             "other_emails": self.other_emails,
             "confirmed_numbers": self.confirmed_numbers,
+            "location_metro": self.location_metro,
+            "companies": [c.to_dict() for c in self.companies],
+            "industry": self.industry,
+            "linkedin_url": self.linkedin_url,
+            "linkedin_id": self.linkedin_id,
+            "social_media_identifiers": [s.to_dict() for s in self.social_media_identifiers],
+            "education": [e.to_dict() for e in self.education],
+            "successful_zestimates": self.successful_zestimates,
+            "successful_extra_info": self.successful_extra_info,
+            "successful_carriers": self.successful_carriers,
+            "pagination": self.pagination,
         }
 
 
@@ -450,11 +591,13 @@ class EmailSearchResult(BaseSearchResult):
     email: str
     email_valid: bool = True
     email_type: Optional[str] = None
+    recovery_check: Optional["RecoveryCheckResult"] = None
     
     def __init__(self, email: str, **kwargs):
         # Extract email-specific fields
         email_valid = kwargs.pop('email_valid', True)
         email_type = kwargs.pop('email_type', None)
+        recovery_check = kwargs.pop('recovery_check', None)
         search_cost = kwargs.pop('search_cost', 0.0025)  # Default email search cost
         
         # Initialize parent class
@@ -464,6 +607,7 @@ class EmailSearchResult(BaseSearchResult):
         self.email = email
         self.email_valid = email_valid
         self.email_type = email_type
+        self.recovery_check = recovery_check
         self.search_cost = search_cost
     
     def to_dict(self) -> Dict[str, Any]:
@@ -473,6 +617,7 @@ class EmailSearchResult(BaseSearchResult):
             "email": self.email,
             "email_valid": self.email_valid,
             "email_type": self.email_type,
+            "recovery_check": self.recovery_check.to_dict() if self.recovery_check else None,
         })
         return base_dict
 
@@ -508,13 +653,16 @@ class DomainSearchResult:
     domain_valid: bool = True
     search_cost: Optional[float] = None
     pricing: Optional[PricingInfo] = None
+    pagination: Optional[Dict[str, Any]] = None
     
     def __init__(self, domain: str, **kwargs):
         self.domain = domain
         self.results = kwargs.get('results', [])
         self.total_results = kwargs.get('total_results', 0)
         self.domain_valid = kwargs.get('domain_valid', True)
-        self.search_cost = kwargs.get('search_cost', 0.0025)  # Domain search cost
+        self.search_cost = kwargs.get('search_cost', 0.0025)
+        self.pricing = kwargs.get('pricing')
+        self.pagination = kwargs.get('pagination')
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert domain search result to dictionary."""
@@ -525,6 +673,41 @@ class DomainSearchResult:
             "domain_valid": self.domain_valid,
             "search_cost": self.search_cost,
             "pricing": self.pricing.to_dict() if self.pricing else None,
+            "pagination": self.pagination,
+        }
+
+
+@dataclass
+class CompanySearchResult:
+    """Result from company search (same shape as domain: list of people/contacts)."""
+    
+    company: str
+    results: List[EmailSearchResult] = field(default_factory=list)
+    total_results: int = 0
+    search_cost: Optional[float] = None
+    pricing: Optional[PricingInfo] = None
+    pagination: Optional[Dict[str, Any]] = None
+    country: Optional[str] = None
+    
+    def __init__(self, company: str, **kwargs):
+        self.company = company
+        self.results = kwargs.get('results', [])
+        self.total_results = kwargs.get('total_results', 0)
+        self.search_cost = kwargs.get('search_cost')
+        self.pricing = kwargs.get('pricing')
+        self.pagination = kwargs.get('pagination')
+        self.country = kwargs.get('country')
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert company search result to dictionary."""
+        return {
+            "company": self.company,
+            "results": [result.to_dict() for result in self.results],
+            "total_results": self.total_results,
+            "search_cost": self.search_cost,
+            "pricing": self.pricing.to_dict() if self.pricing else None,
+            "pagination": self.pagination,
+            "country": self.country,
         }
 
 

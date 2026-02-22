@@ -36,12 +36,16 @@ from .exceptions import (
 from .models import (
     Address,
     BalanceInfo,
+    CompanyInfo,
+    CompanySearchResult,
     DomainSearchResult,
+    EducationEntry,
     EmailSearchResult,
     Person,
     PhoneNumber,
     PhoneSearchResult,
     SearchAPIConfig,
+    SocialMediaIdentifier,
     PhoneFormat,
     SearchType,
     AccessLog,
@@ -54,6 +58,10 @@ from .models import (
     Crime,
     PhoneNumberFull,
     PricingInfo,
+    RecoveryCheckResult,
+    RecoveryModule,
+    RecoveryModulesResponse,
+    UsageStats,
 )
 
 logger = logging.getLogger(__name__)
@@ -327,9 +335,12 @@ class SearchAPI:
                 raise
             raise SearchAPIError(f"Failed to get balance: {str(e)}")
     
-    def get_access_logs(self) -> List[AccessLog]:
+    def get_access_logs(self, limit: Optional[int] = None) -> List[AccessLog]:
         """
         Get access logs using the correct API endpoint.
+        
+        Args:
+            limit: Optional number of logs to retrieve (default: 100, max: 1000).
         
         Returns:
             List of AccessLog objects with access information
@@ -338,7 +349,11 @@ class SearchAPI:
             SearchAPIError: If access logs retrieval fails
         """
         try:
-            logs_url = f"{self.config.base_url}?action=get_access_logs&api_key={self.config.api_key}"
+            params = {"action": "get_access_logs", "api_key": self.config.api_key}
+            if limit is not None:
+                params["limit"] = min(max(1, int(limit)), 1000)
+            query = "&".join(f"{k}={quote_plus(str(v))}" for k, v in params.items())
+            logs_url = f"{self.config.base_url}?{query}"
             
             if self.config.debug_mode:
                 logger.debug(f"Making access logs request to: {logs_url}")
@@ -355,14 +370,17 @@ class SearchAPI:
             
             access_logs = []
             for log_entry in response_data["logs"]:
+                last_accessed = log_entry.get("last_accessed") or log_entry.get("search_time")
                 access_log = AccessLog(
                     ip_address=log_entry.get("ip_address", ""),
-                    last_accessed=parse(log_entry["last_accessed"]) if log_entry.get("last_accessed") else None,
+                    last_accessed=parse(last_accessed) if last_accessed else None,
                     user_agent=log_entry.get("user_agent"),
                     endpoint=log_entry.get("endpoint"),
                     method=log_entry.get("method"),
                     status_code=log_entry.get("status_code"),
                     response_time=log_entry.get("response_time"),
+                    search_type=log_entry.get("search_type"),
+                    search_cost=float(log_entry["search_cost"]) if log_entry.get("search_cost") is not None else None,
                 )
                 access_logs.append(access_log)
             
@@ -372,6 +390,108 @@ class SearchAPI:
             if isinstance(e, SearchAPIError):
                 raise
             raise SearchAPIError(f"Failed to get access logs: {str(e)}")
+    
+    def get_usage_stats(self) -> UsageStats:
+        """
+        Get usage statistics (today and total searches/cost).
+        
+        Returns:
+            UsageStats with today_searches, today_cost, total_searches, total_cost
+            
+        Raises:
+            SearchAPIError: If the request fails
+        """
+        try:
+            stats_url = f"{self.config.base_url}?action=get_usage_stats&api_key={self.config.api_key}"
+            if self.config.debug_mode:
+                logger.debug(f"Making usage stats request to: {stats_url}")
+            response = self.session.get(stats_url, timeout=self.config.timeout)
+            if response.status_code != 200:
+                raise ServerError(f"Usage stats request failed: {response.status_code}", status_code=response.status_code)
+            response_data = self._parse_response(response)
+            if "usage_stats" not in response_data:
+                raise ServerError("Invalid usage stats response from server")
+            stats = response_data["usage_stats"]
+            today = stats.get("today") or {}
+            total = stats.get("total") or {}
+            return UsageStats(
+                today_searches=int(today.get("searches", 0)),
+                today_cost=float(today.get("cost", 0)),
+                total_searches=int(total.get("searches", 0)),
+                total_cost=float(total.get("cost", 0)),
+            )
+        except Exception as e:
+            if isinstance(e, SearchAPIError):
+                raise
+            raise SearchAPIError(f"Failed to get usage stats: {str(e)}")
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        Get cache statistics (e.g. connected, total_keys, redis_used_memory).
+        
+        Returns:
+            Dict with cache stats (structure depends on API; may include connected,
+            total_keys, redis_used_memory, fallback_entries, etc.)
+            
+        Raises:
+            SearchAPIError: If the request fails
+        """
+        try:
+            cache_url = f"{self.config.base_url}?action=cache_stats&api_key={self.config.api_key}"
+            if self.config.debug_mode:
+                logger.debug(f"Making cache stats request to: {cache_url}")
+            response = self.session.get(cache_url, timeout=self.config.timeout)
+            if response.status_code != 200:
+                raise ServerError(f"Cache stats request failed: {response.status_code}", status_code=response.status_code)
+            return self._parse_response(response)
+        except Exception as e:
+            if isinstance(e, SearchAPIError):
+                raise
+            raise SearchAPIError(f"Failed to get cache stats: {str(e)}")
+    
+    def get_recovery_modules(self) -> RecoveryModulesResponse:
+        """
+        Get available recovery check modules and their pricing (for email recovery verification).
+        
+        Returns:
+            RecoveryModulesResponse with modules list and pricing dict (module_name -> price).
+            Use these module names in search_email(..., recovery_modules={"module_order": [...], "enabled_modules": [...]}).
+            
+        Raises:
+            SearchAPIError: If the request fails
+        """
+        try:
+            url = f"{self.config.base_url}?action=get_recovery_modules&api_key={self.config.api_key}"
+            if self.config.debug_mode:
+                logger.debug(f"Making get_recovery_modules request to: {url}")
+            response = self.session.get(url, timeout=self.config.timeout)
+            if response.status_code != 200:
+                raise ServerError(f"Recovery modules request failed: {response.status_code}", status_code=response.status_code)
+            data = self._parse_response(response)
+            modules = []
+            for m in data.get("modules") or []:
+                if isinstance(m, dict):
+                    name = m.get("module_name") or m.get("name") or ""
+                    price = float(m.get("price", 0) or 0)
+                    modules.append(RecoveryModule(
+                        module_name=name,
+                        price=price,
+                        display_name=m.get("display_name"),
+                        description=m.get("description"),
+                        raw=m,
+                    ))
+                elif isinstance(m, str):
+                    modules.append(RecoveryModule(module_name=m, raw={"module_name": m}))
+            pricing = data.get("pricing") or {}
+            if isinstance(pricing, dict):
+                pricing = {k: float(v) for k, v in pricing.items()}
+            else:
+                pricing = {}
+            return RecoveryModulesResponse(modules=modules, pricing=pricing)
+        except Exception as e:
+            if isinstance(e, SearchAPIError):
+                raise
+            raise SearchAPIError(f"Failed to get recovery modules: {str(e)}")
     
     def _make_request(self, params: Optional[Dict[str, Any]] = None, method: str = "POST") -> Dict[str, Any]:
         """
@@ -586,7 +706,58 @@ class SearchAPI:
                 address_str = pattern.sub(self.STATE_ABBREVIATIONS[abbrev], address_str)
         
         return address_str.strip()
-    
+
+    def _ensure_str_list(
+        self, value: Any, dict_key: str = "number"
+    ) -> List[str]:
+        """Normalize API list to List[str]. Handles items that are str or dict (e.g. confirmed_numbers as list of dicts)."""
+        if not value or not isinstance(value, list):
+            return []
+        out: List[str] = []
+        for item in value:
+            if isinstance(item, str):
+                out.append(item)
+            elif isinstance(item, dict):
+                s = item.get(dict_key) or item.get("email") or item.get("value")
+                if s is not None:
+                    out.append(str(s))
+                else:
+                    out.append(str(item))
+            else:
+                out.append(str(item))
+        return out
+
+    def _parse_pricing_from_response(self, pricing_data: Any) -> Optional[PricingInfo]:
+        """Build PricingInfo from API _pricing dict. Coerces numeric strings; uses total_cost or total."""
+        if not pricing_data or not isinstance(pricing_data, dict):
+            return None
+
+        def _float(v: Any, default: float = 0.0) -> float:
+            if v is None:
+                return default
+            if isinstance(v, (int, float)):
+                return float(v)
+            if isinstance(v, str):
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return default
+            return default
+
+        total = _float(
+            pricing_data.get("total_cost") or pricing_data.get("total"),
+            _float(pricing_data.get("search_cost"), 0.0025),
+        )
+        return PricingInfo(
+            search_cost=_float(pricing_data.get("search_cost"), 0.0),
+            extra_info_cost=_float(pricing_data.get("extra_info_cost")),
+            zestimate_cost=_float(pricing_data.get("zestimate_cost")),
+            carrier_cost=_float(pricing_data.get("carrier_cost")),
+            tlo_enrichment_cost=_float(pricing_data.get("tlo_enrichment_cost")),
+            recovery_check_cost=_float(pricing_data.get("recovery_check")),
+            total_cost=total,
+        )
+
     def _parse_address(self, address_data: Union[str, Dict[str, Any]]) -> Address:
         """Parse address data into Address object."""
         if isinstance(address_data, str):
@@ -715,11 +886,17 @@ class SearchAPI:
         """Parse person data into Person object."""
         if not isinstance(person_data, dict):
             return Person()
-        
+        dob = None
+        if person_data.get("dob"):
+            try:
+                dob = parse(person_data["dob"]).date()
+            except (TypeError, ValueError):
+                pass
         return Person(
             name=person_data.get("name"),
-            dob=parse(person_data["dob"]).date() if person_data.get("dob") else None,
+            dob=dob,
             age=person_data.get("age"),
+            gender=person_data.get("gender"),
         )
     
     def _parse_structured_address_components(self, components_data: Dict[str, Any]) -> StructuredAddressComponents:
@@ -840,6 +1017,34 @@ class SearchAPI:
             is_spam_report=phone_data.get("is_spam_report"),
         )
     
+    def _parse_company_info(self, data: Dict[str, Any]) -> CompanyInfo:
+        """Parse company/employment info."""
+        if not isinstance(data, dict):
+            return CompanyInfo(company_name="")
+        return CompanyInfo(
+            company_name=data.get("company_name") or data.get("company") or "",
+            position=data.get("position"),
+        )
+    
+    def _parse_social_media_identifier(self, data: Dict[str, Any]) -> SocialMediaIdentifier:
+        """Parse social media identifier."""
+        if not isinstance(data, dict):
+            return SocialMediaIdentifier(platform="", identifier="")
+        return SocialMediaIdentifier(
+            platform=data.get("platform", ""),
+            identifier=data.get("identifier", ""),
+        )
+    
+    def _parse_education_entry(self, data: Dict[str, Any]) -> EducationEntry:
+        """Parse education entry."""
+        if not isinstance(data, dict):
+            return EducationEntry(school_name="")
+        return EducationEntry(
+            school_name=data.get("school_name") or data.get("school") or "",
+            start_date=data.get("start_date"),
+            end_date=data.get("end_date"),
+        )
+    
     def search_email(
         self,
         email: str,
@@ -847,6 +1052,8 @@ class SearchAPI:
         extra_info: bool = False,
         carrier_info: bool = False,
         tlo_enrichment: bool = False,
+        recovery_check: bool = False,
+        recovery_modules: Optional[Dict[str, List[str]]] = None,
         phone_format: str = "international",
     ) -> EmailSearchResult:
         """
@@ -857,11 +1064,14 @@ class SearchAPI:
             house_value: Include property value information (Zestimate) (+$0.0015)
             extra_info: Include additional data enrichment (+$0.0015)
             carrier_info: Include carrier information (+$0.0005)
-            tlo_enrichment: Include TLO enrichment data (+$0.0030)
+            tlo_enrichment: Include TLO enrichment data (+$0.0025)
+            recovery_check: Enable Phone Recovery Verification for email (variable cost per module)
+            recovery_modules: Optional dict with 'module_order' and/or 'enabled_modules' lists
+                (e.g. {"module_order": ["yahoo", "outlook"], "enabled_modules": ["yahoo", "outlook"]})
             phone_format: Format for phone numbers (string or PhoneFormat enum)
             
         Returns:
-            EmailSearchResult object with search results
+            EmailSearchResult object with search results (includes recovery_check when requested)
             
         Raises:
             ValidationError: If email format is invalid
@@ -887,6 +1097,15 @@ class SearchAPI:
             params["carrier_info"] = "True"
         if tlo_enrichment:
             params["tlo_enrichment"] = "True"
+        if recovery_check:
+            params["recovery_check"] = "True"
+        if recovery_modules and isinstance(recovery_modules, dict):
+            if "module_order" in recovery_modules and isinstance(recovery_modules["module_order"], list):
+                for i, mod in enumerate(recovery_modules["module_order"]):
+                    params[f"recovery_modules[module_order][{i}]"] = mod
+            if "enabled_modules" in recovery_modules and isinstance(recovery_modules["enabled_modules"], list):
+                for i, mod in enumerate(recovery_modules["enabled_modules"]):
+                    params[f"recovery_modules[enabled_modules][{i}]"] = mod
         
         response_data = self._make_request(params, method="GET")
         
@@ -906,8 +1125,11 @@ class SearchAPI:
             if self.config.debug_mode:
                 logger.debug(f"Unwrapped list response, using first element: {response_data}")
         elif "results" in response_data and isinstance(response_data["results"], list) and len(response_data["results"]) > 0:
-            # If response has a results array, use the first result
-            response_data = response_data["results"][0]
+            # If response has a results array, use the first result but preserve top-level _pricing
+            wrapper = response_data
+            response_data = dict(wrapper["results"][0]) if isinstance(wrapper["results"][0], dict) else wrapper["results"][0]
+            if isinstance(response_data, dict) and "_pricing" in wrapper and "_pricing" not in response_data:
+                response_data["_pricing"] = wrapper["_pricing"]
             if self.config.debug_mode:
                 logger.debug(f"Unwrapped results array, using first result: {response_data}")
         
@@ -969,18 +1191,9 @@ class SearchAPI:
             if "No data found" in error_msg:
                 pricing_info = None
                 search_cost = 0.0025
-                if "_pricing" in response_data:
-                    pricing_data = response_data["_pricing"]
-                    if isinstance(pricing_data, dict):
-                        pricing_info = PricingInfo(
-                            search_cost=pricing_data.get("search_cost", 0.0025),
-                            extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
-                            zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
-                            carrier_cost=pricing_data.get("carrier_cost", 0.0),
-                            tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
-                            total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
-                        )
-                        search_cost = pricing_info.total_cost
+                pricing_info = self._parse_pricing_from_response(response_data.get("_pricing"))
+                if pricing_info:
+                    search_cost = pricing_info.total_cost
                 
                 return EmailSearchResult(
                     email=email,
@@ -1002,14 +1215,10 @@ class SearchAPI:
         
         person = None
         # Check for name field - could be None or empty string
-        if "name" in response_data:
-            name_value = response_data["name"]
-            if name_value and (isinstance(name_value, str) and name_value.strip()):
-                person = Person(
-                    name=name_value,
-                    dob=response_data.get("dob"),
-                    age=response_data.get("age")
-                )
+        if response_data.get("name"):
+            person = self._parse_person(response_data)
+        else:
+            person = None
         
         addresses = []
         if "addresses" in response_data:
@@ -1034,10 +1243,10 @@ class SearchAPI:
             emails = [emails] if emails else []
         
         # Parse TLO enrichment fields
-        censored_numbers = response_data.get("censored_numbers", [])
-        if not isinstance(censored_numbers, list):
-            censored_numbers = []
-        
+        censored_numbers = self._ensure_str_list(
+            response_data.get("censored_numbers"), dict_key="number"
+        )
+
         addresses_structured = []
         if "addresses_structured" in response_data:
             addr_structured_data = response_data["addresses_structured"]
@@ -1102,25 +1311,53 @@ class SearchAPI:
             elif isinstance(phones_data, dict):
                 phone_numbers_full.append(self._parse_phone_number_full(phones_data))
         
-        other_emails = response_data.get("other_emails", [])
-        confirmed_numbers = response_data.get("confirmed_numbers", [])
+        other_emails = self._ensure_str_list(
+            response_data.get("other_emails"), dict_key="email"
+        )
+        confirmed_numbers = self._ensure_str_list(
+            response_data.get("confirmed_numbers"), dict_key="number"
+        )
+
+        # Extra-info enrichment fields
+        location_metro = response_data.get("location_metro")
+        companies = []
+        for c in response_data.get("companies") or []:
+            if isinstance(c, dict):
+                companies.append(self._parse_company_info(c))
+        industry = response_data.get("industry")
+        linkedin_url = response_data.get("linkedin_url")
+        linkedin_id = response_data.get("linkedin_id")
+        social_media_identifiers = []
+        for s in response_data.get("social_media_identifiers") or []:
+            if isinstance(s, dict):
+                social_media_identifiers.append(self._parse_social_media_identifier(s))
+        education = []
+        for e in response_data.get("education") or []:
+            if isinstance(e, dict):
+                education.append(self._parse_education_entry(e))
+        successful_zestimates = response_data.get("_successful_zestimates")
+        successful_extra_info = response_data.get("_successful_extra_info")
+        successful_carriers = response_data.get("_successful_carriers")
+        pagination = response_data.get("pagination")
         
-        # Extract pricing from _pricing object if available
+        # Parse recovery check result (email search only)
+        recovery_check_result = None
+        if "recovery_check" in response_data and isinstance(response_data["recovery_check"], dict):
+            rc = response_data["recovery_check"]
+            recovery_check_result = RecoveryCheckResult(
+                matched=bool(rc.get("matched", False)),
+                matched_number=rc.get("matched_number"),
+                matched_module=rc.get("matched_module"),
+                modules_used=rc.get("modules_used", []) if isinstance(rc.get("modules_used"), list) else [],
+                cost=float(rc.get("cost", 0)) if rc.get("cost") is not None else 0.0,
+            )
+        
+        # Extract pricing from _pricing object if available (API returns _pricing with recovery_check when applicable)
         search_cost = 0.0025  # Default
-        pricing_info = None
-        if "_pricing" in response_data:
-            pricing_data = response_data["_pricing"]
-            if isinstance(pricing_data, dict):
-                pricing_info = PricingInfo(
-                    search_cost=pricing_data.get("search_cost", 0.0025),
-                    extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
-                    zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
-                    carrier_cost=pricing_data.get("carrier_cost", 0.0),
-                    tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
-                    total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
-                )
-                search_cost = pricing_info.total_cost
-        
+        pricing_info = self._parse_pricing_from_response(response_data.get("_pricing"))
+        if pricing_info:
+            search_cost = pricing_info.total_cost
+
         # Get total_results from pagination if available, otherwise calculate
         # Count all data fields including TLO enrichment fields
         total_results = (
@@ -1185,6 +1422,18 @@ class SearchAPI:
             phone_numbers_full=phone_numbers_full,
             other_emails=other_emails,
             confirmed_numbers=confirmed_numbers,
+            recovery_check=recovery_check_result,
+            location_metro=location_metro,
+            companies=companies,
+            industry=industry,
+            linkedin_url=linkedin_url,
+            linkedin_id=linkedin_id,
+            social_media_identifiers=social_media_identifiers,
+            education=education,
+            successful_zestimates=successful_zestimates,
+            successful_extra_info=successful_extra_info,
+            successful_carriers=successful_carriers,
+            pagination=pagination,
         )
     
     def search_phone(
@@ -1259,20 +1508,10 @@ class SearchAPI:
                 raise SearchAPIError(f"Phone search failed: {error_msg}")
         
         default_cost = 0.0025
-        pricing_info = None
-        if "_pricing" in response_data:
-            pricing_data = response_data["_pricing"]
-            if isinstance(pricing_data, dict):
-                pricing_info = PricingInfo(
-                    search_cost=pricing_data.get("search_cost", 0.0025),
-                    extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
-                    zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
-                    carrier_cost=pricing_data.get("carrier_cost", 0.0),
-                    tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
-                    total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
-                )
-                default_cost = pricing_info.total_cost
-        
+        pricing_info = self._parse_pricing_from_response(response_data.get("_pricing"))
+        if pricing_info:
+            default_cost = pricing_info.total_cost
+
         if isinstance(response_data, list):
             for result_data in response_data:
                 result = self._parse_single_phone_result(phone, result_data)
@@ -1295,13 +1534,7 @@ class SearchAPI:
     
     def _parse_single_phone_result(self, phone: str, result_data: Dict[str, Any]) -> PhoneSearchResult:
         """Parse single phone search result."""
-        person = None
-        if "name" in result_data and result_data["name"]:
-            person = Person(
-                name=result_data["name"],
-                dob=result_data.get("dob"),
-                age=result_data.get("age")
-            )
+        person = self._parse_person(result_data) if result_data.get("name") else None
         
         addresses = []
         if "addresses" in result_data:
@@ -1322,10 +1555,10 @@ class SearchAPI:
         emails = result_data.get("emails", [])
         
         # Parse TLO enrichment fields
-        censored_numbers = result_data.get("censored_numbers", [])
-        if not isinstance(censored_numbers, list):
-            censored_numbers = []
-        
+        censored_numbers = self._ensure_str_list(
+            result_data.get("censored_numbers"), dict_key="number"
+        )
+
         addresses_structured = []
         if "addresses_structured" in result_data:
             addr_structured_data = result_data["addresses_structured"]
@@ -1390,8 +1623,26 @@ class SearchAPI:
             elif isinstance(phones_data, dict):
                 phone_numbers_full.append(self._parse_phone_number_full(phones_data))
         
-        other_emails = result_data.get("other_emails", [])
-        confirmed_numbers = result_data.get("confirmed_numbers", [])
+        other_emails = self._ensure_str_list(
+            result_data.get("other_emails"), dict_key="email"
+        )
+        confirmed_numbers = self._ensure_str_list(
+            result_data.get("confirmed_numbers"), dict_key="number"
+        )
+
+        # Extra-info enrichment
+        companies = []
+        for c in result_data.get("companies") or []:
+            if isinstance(c, dict):
+                companies.append(self._parse_company_info(c))
+        social_media_identifiers = []
+        for s in result_data.get("social_media_identifiers") or []:
+            if isinstance(s, dict):
+                social_media_identifiers.append(self._parse_social_media_identifier(s))
+        education = []
+        for e in result_data.get("education") or []:
+            if isinstance(e, dict):
+                education.append(self._parse_education_entry(e))
         
         total_results = len(addresses) + len(phone_numbers) + len(emails)
         
@@ -1416,17 +1667,31 @@ class SearchAPI:
             phone_numbers_full=phone_numbers_full,
             other_emails=other_emails,
             confirmed_numbers=confirmed_numbers,
+            location_metro=result_data.get("location_metro"),
+            companies=companies,
+            industry=result_data.get("industry"),
+            linkedin_url=result_data.get("linkedin_url"),
+            linkedin_id=result_data.get("linkedin_id"),
+            social_media_identifiers=social_media_identifiers,
+            education=education,
         )
     
-    def search_domain(self, domain: str) -> DomainSearchResult:
+    def search_domain(
+        self,
+        domain: str,
+        page: int = 1,
+        limit: int = 100,
+    ) -> DomainSearchResult:
         """
         Search for information by domain name.
         
         Args:
             domain: Domain name to search for
+            page: Page number (1-based)
+            limit: Results per page (default 100, max 500)
             
         Returns:
-            DomainSearchResult object with search results
+            DomainSearchResult with results list and pagination
             
         Raises:
             ValidationError: If domain format is invalid
@@ -1438,11 +1703,96 @@ class SearchAPI:
         params = {
             "api_key": self.config.api_key,
             "domain": domain,
+            "page": max(1, page),
+            "limit": min(max(1, limit), 500),
         }
         
         response_data = self._make_request(params, method="GET")
         
         return self._parse_domain_response(domain, response_data)
+    
+    def search_company(
+        self,
+        company: str,
+        country: Optional[str] = None,
+        page: int = 1,
+        limit: int = 100,
+    ) -> CompanySearchResult:
+        """
+        Search for people/contacts by company name.
+        
+        Args:
+            company: Company name to search for
+            country: Optional country code or name to narrow results
+            page: Page number (1-based)
+            limit: Results per page (default 100, max 500)
+            
+        Returns:
+            CompanySearchResult with results list (same shape as domain search)
+            
+        Raises:
+            SearchAPIError: For API errors
+        """
+        if not company or not isinstance(company, str) or not company.strip():
+            raise ValidationError("Company name is required and must be a non-empty string")
+        company = company.strip()
+        params = {
+            "api_key": self.config.api_key,
+            "company": company,
+            "page": max(1, page),
+            "limit": min(max(1, limit), 500),
+        }
+        if country:
+            params["country"] = country
+        response_data = self._make_request(params, method="GET")
+        return self._parse_company_response(company, response_data, country=country)
+    
+    def _parse_company_response(
+        self, company: str, response_data: Dict[str, Any], country: Optional[str] = None
+    ) -> CompanySearchResult:
+        """Parse company search response (same structure as domain)."""
+        if "error" in response_data:
+            error_msg = response_data["error"]
+            search_cost = 0.0025
+            pricing_info = self._parse_pricing_from_response(response_data.get("_pricing"))
+            if pricing_info:
+                search_cost = pricing_info.total_cost
+            if "No data found" in error_msg or "too broad" in error_msg.lower():
+                return CompanySearchResult(
+                    company=company,
+                    results=[],
+                    total_results=0,
+                    search_cost=search_cost,
+                    pricing=pricing_info,
+                    country=country,
+                )
+            raise SearchAPIError(f"Company search failed: {error_msg}")
+        search_cost = 0.0025
+        pricing_info = self._parse_pricing_from_response(response_data.get("_pricing"))
+        if pricing_info:
+            search_cost = pricing_info.total_cost
+        results = []
+        raw_results = response_data.get("results") or []
+        if isinstance(response_data, list):
+            raw_results = response_data
+        for result_data in raw_results:
+            if isinstance(result_data, dict):
+                results.append(self._parse_single_email_result(result_data))
+        pagination = response_data.get("pagination")
+        total_results = len(results)
+        if isinstance(pagination, dict) and pagination.get("total_results") is not None:
+            total_results = max(total_results, int(pagination["total_results"]))
+        if "_total" in response_data:
+            total_results = max(total_results, int(response_data["_total"]))
+        return CompanySearchResult(
+            company=company,
+            results=results,
+            total_results=total_results,
+            search_cost=search_cost,
+            pricing=pricing_info,
+            pagination=pagination,
+            country=country,
+        )
     
     def _parse_domain_response(self, domain: str, response_data: Dict[str, Any]) -> DomainSearchResult:
         """Parse domain search response."""
@@ -1460,20 +1810,10 @@ class SearchAPI:
                     search_cost = pricing.get("total_cost", pricing.get("search_cost", 0.0025))
             
             if "No data found" in error_msg:
-                pricing_info = None
-                if "_pricing" in response_data:
-                    pricing_data = response_data["_pricing"]
-                    if isinstance(pricing_data, dict):
-                        pricing_info = PricingInfo(
-                            search_cost=pricing_data.get("search_cost", 0.0025),
-                            extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
-                            zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
-                            carrier_cost=pricing_data.get("carrier_cost", 0.0),
-                            tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
-                            total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
-                        )
-                        search_cost = pricing_info.total_cost
-                
+                pricing_info = self._parse_pricing_from_response(response_data.get("_pricing"))
+                if pricing_info:
+                    search_cost = pricing_info.total_cost
+
                 return DomainSearchResult(
                     domain=domain,
                     results=[],
@@ -1487,36 +1827,25 @@ class SearchAPI:
                 raise SearchAPIError(f"Domain search failed: {error_msg}")
         
         search_cost = 0.0025
-        pricing_info = None
-        if "_pricing" in response_data:
-            pricing_data = response_data["_pricing"]
-            if isinstance(pricing_data, dict):
-                pricing_info = PricingInfo(
-                    search_cost=pricing_data.get("search_cost", 0.0025),
-                    extra_info_cost=pricing_data.get("extra_info_cost", 0.0),
-                    zestimate_cost=pricing_data.get("zestimate_cost", 0.0),
-                    carrier_cost=pricing_data.get("carrier_cost", 0.0),
-                    tlo_enrichment_cost=pricing_data.get("tlo_enrichment_cost", 0.0),
-                    total_cost=pricing_data.get("total_cost", pricing_data.get("search_cost", 0.0025)),
-                )
-                search_cost = pricing_info.total_cost
-        
+        pricing_info = self._parse_pricing_from_response(response_data.get("_pricing"))
+        if pricing_info:
+            search_cost = pricing_info.total_cost
+
         if isinstance(response_data, list):
             for result_data in response_data:
-                email_result = self._parse_single_email_result(result_data)
-                email_result.total_results = len(email_result.addresses) + len(email_result.phone_numbers) + len(email_result.emails)
-                results.append(email_result)
+                results.append(self._parse_single_email_result(result_data))
         elif "results" in response_data and isinstance(response_data["results"], list):
             for result_data in response_data["results"]:
-                email_result = self._parse_single_email_result(result_data)
-                email_result.total_results = len(email_result.addresses) + len(email_result.phone_numbers) + len(email_result.emails)
-                results.append(email_result)
+                results.append(self._parse_single_email_result(result_data))
         else:
-            email_result = self._parse_single_email_result(response_data)
-            email_result.total_results = len(email_result.addresses) + len(email_result.phone_numbers) + len(email_result.emails)
-            results.append(email_result)
+            results.append(self._parse_single_email_result(response_data))
         
         total_results = len(results)
+        pagination = response_data.get("pagination")
+        if isinstance(pagination, dict) and pagination.get("total_results") is not None:
+            total_results = max(total_results, int(pagination["total_results"]))
+        if "_total" in response_data:
+            total_results = max(total_results, int(response_data["_total"]))
         
         return DomainSearchResult(
             domain=domain,
@@ -1524,17 +1853,12 @@ class SearchAPI:
             total_results=total_results,
             search_cost=search_cost,
             pricing=pricing_info,
+            pagination=pagination,
         )
     
     def _parse_single_email_result(self, result_data: Dict[str, Any]) -> EmailSearchResult:
-        """Parse single email search result."""
-        person = None
-        if "name" in result_data and result_data["name"]:
-            person = Person(
-                name=result_data["name"],
-                dob=result_data.get("dob"),
-                age=result_data.get("age")
-            )
+        """Parse single email search result (used for domain/company and batch)."""
+        person = self._parse_person(result_data) if result_data.get("name") else None
         
         addresses = []
         if "addresses" in result_data:
@@ -1566,33 +1890,122 @@ class SearchAPI:
         
         emails = []
         if "emails" in result_data:
-            emails = result_data["emails"]
+            emails = result_data["emails"] if isinstance(result_data["emails"], list) else [result_data["emails"]]
         elif "email" in result_data:
             email_data = result_data["email"]
             if isinstance(email_data, list):
                 emails = email_data
             else:
-                emails = [email_data]
+                emails = [email_data] if email_data else []
         
         primary_email = ""
+        if emails:
+            primary_email = emails[0] if isinstance(emails[0], str) else str(emails[0])
         if "email" in result_data:
             email_data = result_data["email"]
             if isinstance(email_data, list) and email_data:
-                primary_email = email_data[0]
+                primary_email = email_data[0] if isinstance(email_data[0], str) else str(email_data[0])
             elif isinstance(email_data, str):
                 primary_email = email_data
         
+        # TLO / enrichment fields (domain, company, and rich email/phone results)
+        censored_numbers = self._ensure_str_list(
+            result_data.get("censored_numbers"), dict_key="number"
+        )
+        addresses_structured = []
+        if "addresses_structured" in result_data:
+            for addr_data in result_data["addresses_structured"] or []:
+                if isinstance(addr_data, dict):
+                    addresses_structured.append(self._parse_structured_address(addr_data))
+        alternative_names = result_data.get("alternative_names") or []
+        if not isinstance(alternative_names, list):
+            alternative_names = []
+        all_names = []
+        if "all_names" in result_data:
+            for name_data in result_data["all_names"] or []:
+                if isinstance(name_data, dict):
+                    all_names.append(self._parse_name_record(name_data))
+        all_dobs = []
+        if "all_dobs" in result_data:
+            for dob_data in result_data["all_dobs"] or []:
+                if isinstance(dob_data, dict):
+                    all_dobs.append(self._parse_dob_record(dob_data))
+        related_persons = []
+        if "related_persons" in result_data:
+            for person_data in result_data["related_persons"] or []:
+                if isinstance(person_data, dict):
+                    related_persons.append(self._parse_related_person(person_data))
+        criminal_records = []
+        if "criminal_records" in result_data:
+            for record_data in result_data["criminal_records"] or []:
+                if isinstance(record_data, dict):
+                    criminal_records.append(self._parse_criminal_record(record_data))
+        phone_numbers_full = []
+        if "phone_numbers_full" in result_data:
+            for phone_data in result_data["phone_numbers_full"] or []:
+                if isinstance(phone_data, dict):
+                    phone_numbers_full.append(self._parse_phone_number_full(phone_data))
+        other_emails = self._ensure_str_list(
+            result_data.get("other_emails"), dict_key="email"
+        )
+        confirmed_numbers = self._ensure_str_list(
+            result_data.get("confirmed_numbers"), dict_key="number"
+        )
+
+        # Extra-info enrichment
+        companies = []
+        for c in result_data.get("companies") or []:
+            if isinstance(c, dict):
+                companies.append(self._parse_company_info(c))
+        social_media_identifiers = []
+        for s in result_data.get("social_media_identifiers") or []:
+            if isinstance(s, dict):
+                social_media_identifiers.append(self._parse_social_media_identifier(s))
+        education = []
+        for e in result_data.get("education") or []:
+            if isinstance(e, dict):
+                education.append(self._parse_education_entry(e))
+        
+        total_results = (
+            len(addresses) + len(phone_numbers) + len(emails) +
+            len(addresses_structured) + len(all_names) + len(all_dobs) +
+            len(related_persons) + len(criminal_records) + len(phone_numbers_full) +
+            len(censored_numbers) + len(confirmed_numbers) + len(other_emails) + len(alternative_names) +
+            (1 if person and person.name else 0)
+        )
+
+        pricing_info = self._parse_pricing_from_response(result_data.get("_pricing"))
+        search_cost = pricing_info.total_cost if pricing_info else 0.0025
+
         return EmailSearchResult(
-            email=primary_email,
+            email=primary_email or (emails[0] if emails else ""),
             person=person,
             addresses=addresses,
             phone_numbers=phone_numbers,
             emails=emails,
             search_timestamp=datetime.now(),
-            total_results=len(addresses) + len(phone_numbers),
-            search_cost=0.0025,
+            total_results=total_results,
+            search_cost=search_cost,
+            pricing=pricing_info,
             email_valid=result_data.get("email_valid", True),
-            email_type=result_data.get("email_type")
+            email_type=result_data.get("email_type"),
+            censored_numbers=censored_numbers,
+            addresses_structured=addresses_structured,
+            alternative_names=alternative_names,
+            all_names=all_names,
+            all_dobs=all_dobs,
+            related_persons=related_persons,
+            criminal_records=criminal_records,
+            phone_numbers_full=phone_numbers_full,
+            other_emails=other_emails,
+            confirmed_numbers=confirmed_numbers,
+            location_metro=result_data.get("location_metro"),
+            companies=companies,
+            industry=result_data.get("industry"),
+            linkedin_url=result_data.get("linkedin_url"),
+            linkedin_id=result_data.get("linkedin_id"),
+            social_media_identifiers=social_media_identifiers,
+            education=education,
         )
     
     def close(self) -> None:

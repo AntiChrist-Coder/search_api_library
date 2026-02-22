@@ -1,28 +1,40 @@
 import json
+import os
+import sys
 import traceback
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from search_api import SearchAPI, SearchAPIConfig
 from search_api.exceptions import (
     SearchAPIError, AuthenticationError, ValidationError, RateLimitError,
     InsufficientBalanceError, ServerError, NetworkError, TimeoutError
 )
 
+# Config file path (same directory as this script) - persisted across runs
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(SCRIPT_DIR, 'search_api_config.json')
+
 # =============================================================================
-# USER CONFIGURATION - CUSTOMIZE THESE SETTINGS
+# USER CONFIGURATION - CUSTOMIZE THESE SETTINGS (or use interactive setup)
+# =============================================================================
+# On first run (or with --configure / -c), the script will prompt for options,
+# output fields, and (if recovery is enabled) which recovery modules to use and
+# in what order. Settings are saved to search_api_config.json in this directory.
 # =============================================================================
 
 # API Configuration
-api_key = ""  # Set your API key here
+api_key = ""  # Set here or via interactive setup; stored in search_api_config.json
 
-# Search Options
+# Search Options (overwritten by load_config() if config exists)
 HOUSE_VALUE = True            # Include property value information (Zestimate) (+$0.0015)
-OUTPUT_ALL = False             # Output all results, even empty ones
-EXTRA_INFO = False             # Include additional data enrichment (+$0.0015)
-CARRIER_INFO = False           # Include carrier information (+$0.0005)
-TLO_ENRICHMENT = True         # Include TLO enrichment data (+$0.0030)
+OUTPUT_ALL = False            # Output all results, even empty ones
+EXTRA_INFO = False            # Include additional data enrichment (+$0.0015)
+CARRIER_INFO = False          # Include carrier information (+$0.0005)
+TLO_ENRICHMENT = True         # Include TLO enrichment data (+$0.0025)
+RECOVERY_CHECK = False        # Phone recovery verification for email (variable cost per module)
+RECOVERY_MODULES = None       # {"module_order": [...], "enabled_modules": [...]} when recovery enabled
 
 # Performance Settings
 MAX_WORKERS = 20               # Number of concurrent workers
@@ -40,9 +52,10 @@ OUTPUT_FIELDS_BASE = {
     'name': True,              # Person's full name
     'dob': True,               # Date of birth
     'age': True,               # Person's age
+    'gender': False,           # Person's gender (extra_info)
     'phone_numbers': True,     # All associated phone numbers
     'addresses': True,         # All addresses
-    'addresses_structured': True, # Structured addresses with components (available in both)
+    'addresses_structured': True, # Structured addresses with components
     'emails': False,           # Additional email addresses found
     'other_emails': False,     # Other email addresses (TLO-only)
     'email_valid': False,      # Whether the email is valid
@@ -50,15 +63,25 @@ OUTPUT_FIELDS_BASE = {
     'total_results': False,    # Number of results found
     'search_cost': False,      # Total cost of the search in USD
     'pricing_breakdown': False, # Detailed pricing breakdown
-    # TLO Enrichment Fields (only available when TLO_ENRICHMENT=True)
-    'censored_numbers': True, # Censored phone numbers (TLO-only)
-    'alternative_names': True, # Alternative names (TLO-only)
-    'all_names': True,        # All name records with dates (TLO-only)
-    'all_dobs': True,         # All date of birth records (TLO-only)
-    'related_persons': False,  # Related persons (TLO-only)
-    'criminal_records': True, # Criminal records (TLO-only)
-    'phone_numbers_full': True, # Full phone number details with carrier (TLO-only)
-    'confirmed_numbers': True, # Confirmed phone numbers (TLO-only)
+    # Extra-info enrichment (when EXTRA_INFO=True)
+    'location_metro': False,
+    'companies': False,        # Company name + position
+    'industry': False,
+    'linkedin_url': False,
+    'linkedin_id': False,
+    'social_media_identifiers': False,
+    'education': False,
+    # Recovery check (when RECOVERY_CHECK=True)
+    'recovery_check': False,   # matched, matched_number, modules_used
+    # TLO Enrichment Fields (when TLO_ENRICHMENT=True)
+    'censored_numbers': True,
+    'alternative_names': True,
+    'all_names': True,
+    'all_dobs': True,
+    'related_persons': False,
+    'criminal_records': True,
+    'phone_numbers_full': True,
+    'confirmed_numbers': True,
 }
 
 # TLO-only fields that should be disabled when TLO_ENRICHMENT is False
@@ -81,8 +104,10 @@ if not TLO_ENRICHMENT:
     for field in TLO_ONLY_FIELDS:
         OUTPUT_FIELDS[field] = False
 
-# OUTPUT FORMAT CONFIGURATION
-OUTPUT_SEPARATOR = ' | '       # Separator between fields (e.g., ' | ', ',', '\t')
+# OUTPUT FORMAT CONFIGURATION (overwritten by config / interactive setup)
+OUTPUT_FORMAT = 'text'         # 'text' | 'csv' | 'json'
+OUTPUT_SEPARATOR = ' | '       # Separator for text format
+OUTPUT_CSV_DELIMITER = ','     # Delimiter for CSV (e.g. ',', '\t', ';', '|')
 OUTPUT_ENCODING = 'UTF-8'      # File encoding for output
 INCLUDE_HEADER = True          # Include header row in output file
 
@@ -92,6 +117,232 @@ ADDRESS_INCLUDE_ZESTIMATE = True           # Include property value (requires HO
 ADDRESS_INCLUDE_STATUS = True              # Include home status
 ADDRESS_INCLUDE_LAST_KNOWN = False         # Include last known date
 
+
+# =============================================================================
+# PERSISTENT CONFIG: load / save / interactive setup
+# =============================================================================
+
+def _get_field_list_for_prompt(include_tlo_fields: bool = True) -> List[str]:
+    """Ordered list of field keys for numbered prompts. Excludes TLO-only fields when include_tlo_fields is False."""
+    all_fields = [
+        'email', 'name', 'dob', 'age', 'gender', 'phone_numbers', 'addresses',
+        'addresses_structured', 'emails', 'other_emails', 'email_valid', 'email_type',
+        'total_results', 'search_cost', 'pricing_breakdown', 'location_metro',
+        'companies', 'industry', 'linkedin_url', 'linkedin_id', 'social_media_identifiers',
+        'education', 'recovery_check', 'censored_numbers', 'alternative_names',
+        'all_names', 'all_dobs', 'related_persons', 'criminal_records',
+        'phone_numbers_full', 'confirmed_numbers',
+    ]
+    if include_tlo_fields:
+        return all_fields
+    return [k for k in all_fields if k not in TLO_ONLY_FIELDS]
+
+
+def _yes_no(prompt: str, default: bool) -> bool:
+    """Prompt for y/n; return True for y/yes, False for n/no."""
+    d = 'Y' if default else 'N'
+    while True:
+        raw = input(f"  {prompt} (y/n) [{d}]: ").strip().lower()
+        if not raw:
+            return default
+        if raw in ('y', 'yes'):
+            return True
+        if raw in ('n', 'no'):
+            return False
+        print("  Enter y or n.")
+
+
+def load_config() -> bool:
+    """Load config from CONFIG_PATH into module globals. Returns True if loaded."""
+    global api_key, HOUSE_VALUE, OUTPUT_ALL, EXTRA_INFO, CARRIER_INFO
+    global TLO_ENRICHMENT, RECOVERY_CHECK, RECOVERY_MODULES, OUTPUT_FIELDS
+    global OUTPUT_FORMAT, OUTPUT_SEPARATOR, OUTPUT_CSV_DELIMITER
+    if not os.path.isfile(CONFIG_PATH):
+        return False
+    try:
+        with open(CONFIG_PATH, 'r', encoding='UTF-8') as f:
+            data = json.load(f)
+        api_key = data.get('api_key', api_key)
+        HOUSE_VALUE = data.get('house_value', HOUSE_VALUE)
+        OUTPUT_ALL = data.get('output_all', OUTPUT_ALL)
+        EXTRA_INFO = data.get('extra_info', EXTRA_INFO)
+        CARRIER_INFO = data.get('carrier_info', CARRIER_INFO)
+        TLO_ENRICHMENT = data.get('tlo_enrichment', TLO_ENRICHMENT)
+        RECOVERY_CHECK = data.get('recovery_check', RECOVERY_CHECK)
+        RECOVERY_MODULES = data.get('recovery_modules')
+        OUTPUT_FORMAT = data.get('output_format', OUTPUT_FORMAT)
+        OUTPUT_SEPARATOR = data.get('output_separator', OUTPUT_SEPARATOR)
+        OUTPUT_CSV_DELIMITER = data.get('output_csv_delimiter', OUTPUT_CSV_DELIMITER)
+        out = data.get('output_fields')
+        if isinstance(out, dict):
+            OUTPUT_FIELDS.clear()
+            OUTPUT_FIELDS.update(OUTPUT_FIELDS_BASE)
+            OUTPUT_FIELDS.update(out)
+            if not TLO_ENRICHMENT:
+                for f in TLO_ONLY_FIELDS:
+                    OUTPUT_FIELDS[f] = False
+        return True
+    except Exception as e:
+        logging.warning(f"Could not load config from {CONFIG_PATH}: {e}")
+        return False
+
+
+def save_config() -> None:
+    """Save current options and output fields to CONFIG_PATH."""
+    data = {
+        'api_key': api_key,
+        'house_value': HOUSE_VALUE,
+        'output_all': OUTPUT_ALL,
+        'extra_info': EXTRA_INFO,
+        'carrier_info': CARRIER_INFO,
+        'tlo_enrichment': TLO_ENRICHMENT,
+        'recovery_check': RECOVERY_CHECK,
+        'recovery_modules': RECOVERY_MODULES,
+        'output_format': OUTPUT_FORMAT,
+        'output_separator': OUTPUT_SEPARATOR,
+        'output_csv_delimiter': OUTPUT_CSV_DELIMITER,
+        'output_fields': dict(OUTPUT_FIELDS),
+    }
+    with open(CONFIG_PATH, 'w', encoding='UTF-8') as f:
+        json.dump(data, f, indent=2)
+    print(f"  Configuration saved to {CONFIG_PATH}")
+
+
+def interactive_setup() -> None:
+    """Prompt for options, fields, and (if recovery enabled) recovery modules; then save."""
+    global api_key, HOUSE_VALUE, EXTRA_INFO, CARRIER_INFO, TLO_ENRICHMENT, RECOVERY_CHECK
+    global RECOVERY_MODULES, OUTPUT_FIELDS, OUTPUT_FORMAT, OUTPUT_SEPARATOR, OUTPUT_CSV_DELIMITER, OUTPUT_ALL
+
+    print("\n=== Search API – Interactive configuration ===\n")
+
+    # API key
+    if not api_key:
+        api_key_in = input("Enter your API key: ").strip()
+        if not api_key_in:
+            print("API key is required. Exiting.")
+            sys.exit(1)
+        api_key = api_key_in
+    else:
+        change = input(f"Use existing API key? (y/n) [y]: ").strip().lower()
+        if change in ('n', 'no'):
+            api_key = input("Enter your API key: ").strip() or api_key
+
+    # Search options
+    print("\n--- Search options ---")
+    HOUSE_VALUE = _yes_no("House value (Zestimate) (+$0.0015)", False)
+    EXTRA_INFO = _yes_no("Extra info enrichment (+$0.0015)", False)
+    CARRIER_INFO = _yes_no("Carrier info (+$0.0005)", False)
+    TLO_ENRICHMENT = _yes_no("TLO enrichment (+$0.0025)", False)
+    RECOVERY_CHECK = _yes_no("Phone recovery verification (variable cost per module)", False)
+
+    # Recovery modules (if recovery enabled)
+    RECOVERY_MODULES = None
+    if RECOVERY_CHECK:
+        print("\n--- Recovery modules ---")
+        print("  Fetching available modules...")
+        try:
+            config = SearchAPIConfig(api_key=api_key, debug_mode=False)
+            client = SearchAPI(config=config)
+            recovery = client.get_recovery_modules()
+            client.close()
+        except Exception as e:
+            print(f"  Could not fetch recovery modules: {e}. You can set recovery modules later in the config file.")
+        else:
+            modules = recovery.modules
+            if not modules:
+                print("  No recovery modules returned by API.")
+            else:
+                for i, m in enumerate(modules, 1):
+                    price = recovery.pricing.get(m.module_name, m.price)
+                    print(f"    {i}. {m.module_name}  (${price:.4f})")
+                print("  Enter the numbers of modules to ENABLE and their RUN ORDER (comma-separated, e.g. 1,3,4):")
+                en_str = input("  Enabled + order: ").strip()
+                if en_str:
+                    try:
+                        indices = [int(x.strip()) for x in en_str.split(",") if x.strip()]
+                        enabled = [modules[i - 1].module_name for i in indices if 1 <= i <= len(modules)]
+                    except (ValueError, IndexError):
+                        enabled = [m.module_name for m in modules]
+                    else:
+                        if not enabled:
+                            enabled = [m.module_name for m in modules]
+                    RECOVERY_MODULES = {"module_order": enabled, "enabled_modules": enabled}
+                    print(f"  Using: {enabled}")
+
+    # Output fields (only show TLO enrichment fields if TLO was enabled)
+    print("\n--- Output fields ---")
+    field_list = _get_field_list_for_prompt(include_tlo_fields=TLO_ENRICHMENT)
+    for i, key in enumerate(field_list, 1):
+        current = OUTPUT_FIELDS.get(key, False)
+        print(f"  {i:2}. {key}  [{'on' if current else 'off'}]")
+    print("  Enter field numbers to INCLUDE (comma or range, e.g. 1,2,3,5-8), 'all', or 'default':")
+    choice = input("  Fields: ").strip().lower()
+    if choice == 'all':
+        for k in field_list:
+            OUTPUT_FIELDS[k] = True
+    elif choice == 'default':
+        # sensible default: email, name, dob, age, phone_numbers, addresses, key TLO fields
+        default_on = {'email', 'name', 'dob', 'age', 'phone_numbers', 'addresses', 'addresses_structured',
+                     'censored_numbers', 'alternative_names', 'all_names', 'all_dobs', 'phone_numbers_full', 'confirmed_numbers'}
+        for k in field_list:
+            OUTPUT_FIELDS[k] = k in default_on
+    elif choice:
+        try:
+            included = set()
+            for part in choice.split(","):
+                part = part.strip()
+                if "-" in part:
+                    a, b = part.split("-", 1)
+                    lo, hi = int(a.strip()), int(b.strip())
+                    for idx in range(lo, hi + 1):
+                        if 1 <= idx <= len(field_list):
+                            included.add(field_list[idx - 1])
+                else:
+                    idx = int(part)
+                    if 1 <= idx <= len(field_list):
+                        included.add(field_list[idx - 1])
+            for k in field_list:
+                OUTPUT_FIELDS[k] = k in included
+        except ValueError:
+            print("  Invalid input; keeping current field selection.")
+
+    if not TLO_ENRICHMENT:
+        for f in TLO_ONLY_FIELDS:
+            OUTPUT_FIELDS[f] = False
+
+    # Output format and options
+    print("\n--- Output format ---")
+    print("  1. Text (pipe-separated)")
+    print("  2. CSV")
+    print("  3. JSON (one object per line)")
+    fmt = input("  Output format (1–3) [1]: ").strip() or "1"
+    if fmt == "2":
+        OUTPUT_FORMAT = "csv"
+        print("  CSV delimiter: 1=comma, 2=tab, 3=semicolon, 4=pipe, 5=custom")
+        delim = input("  Delimiter (1–5) [1]: ").strip() or "1"
+        if delim == "2":
+            OUTPUT_CSV_DELIMITER = "\t"
+        elif delim == "3":
+            OUTPUT_CSV_DELIMITER = ";"
+        elif delim == "4":
+            OUTPUT_CSV_DELIMITER = "|"
+        elif delim == "5":
+            custom = input("  Enter delimiter character: ").strip()
+            if custom:
+                OUTPUT_CSV_DELIMITER = custom
+        else:
+            OUTPUT_CSV_DELIMITER = ","
+    elif fmt == "3":
+        OUTPUT_FORMAT = "json"
+    else:
+        OUTPUT_FORMAT = "text"
+        OUTPUT_SEPARATOR = " | "
+
+    print("  Output only emails that were found (recommended), or all lines (including not found)?")
+    OUTPUT_ALL = _yes_no("  Output all lines (including not found)", default=False)
+
+    save_config()
+    print("\nConfiguration complete. Run the script again (without --configure) to process emails.\n")
 
 
 # =============================================================================
@@ -114,6 +365,18 @@ def get_output_field_order() -> List[str]:
     return [field for field, enabled in OUTPUT_FIELDS.items() if enabled]
 
 
+def get_output_separator() -> str:
+    """Return the separator for the current output format (CSV delimiter or text separator)."""
+    return OUTPUT_CSV_DELIMITER if OUTPUT_FORMAT == 'csv' else OUTPUT_SEPARATOR
+
+
+def _csv_quote_field(value: str, delimiter: str) -> str:
+    """Quote a CSV field if it contains the delimiter, newline, or double-quote."""
+    if delimiter in value or '\n' in value or '\r' in value or '"' in value:
+        return '"' + value.replace('"', '""') + '"'
+    return value
+
+
 def create_header() -> str:
     """Create header row based on enabled fields."""
     if not INCLUDE_HEADER:
@@ -121,9 +384,10 @@ def create_header() -> str:
     
     field_names = {
         'email': 'Email',
-        'name': 'Name', 
+        'name': 'Name',
         'dob': 'DOB',
         'age': 'Age',
+        'gender': 'Gender',
         'phone_numbers': 'Phone Numbers',
         'addresses': 'Addresses',
         'emails': 'Emails',
@@ -133,6 +397,14 @@ def create_header() -> str:
         'total_results': 'Total Results',
         'search_cost': 'Search Cost',
         'pricing_breakdown': 'Pricing Breakdown',
+        'location_metro': 'Location Metro',
+        'companies': 'Companies',
+        'industry': 'Industry',
+        'linkedin_url': 'LinkedIn URL',
+        'linkedin_id': 'LinkedIn ID',
+        'social_media_identifiers': 'Social Media',
+        'education': 'Education',
+        'recovery_check': 'Recovery Check',
         'censored_numbers': 'Censored Numbers',
         'alternative_names': 'Alternative Names',
         'all_names': 'All Names',
@@ -146,7 +418,10 @@ def create_header() -> str:
     
     enabled_fields = get_output_field_order()
     header_fields = [field_names[field] for field in enabled_fields]
-    return OUTPUT_SEPARATOR.join(header_fields)
+    sep = get_output_separator()
+    if OUTPUT_FORMAT == 'csv':
+        return sep.join(_csv_quote_field(h, sep) for h in header_fields)
+    return sep.join(header_fields)
 
 
 def load_emails(file_path: str) -> List[str]:
@@ -416,6 +691,8 @@ def format_pricing_breakdown(pricing) -> str:
         parts.append(f"Carrier: ${pricing.carrier_cost:.4f}")
     if hasattr(pricing, 'tlo_enrichment_cost') and pricing.tlo_enrichment_cost:
         parts.append(f"TLO: ${pricing.tlo_enrichment_cost:.4f}")
+    if hasattr(pricing, 'recovery_check_cost') and pricing.recovery_check_cost:
+        parts.append(f"Recovery: ${pricing.recovery_check_cost:.4f}")
     if hasattr(pricing, 'total_cost') and pricing.total_cost:
         parts.append(f"Total: ${pricing.total_cost:.4f}")
     
@@ -442,12 +719,14 @@ def format_person(person) -> Dict[str, str]:
         return {
             'name': 'None' if OUTPUT_ALL else 'N/A',
             'dob': 'None' if OUTPUT_ALL else 'N/A',
-            'age': 'None' if OUTPUT_ALL else 'N/A'
+            'age': 'None' if OUTPUT_ALL else 'N/A',
+            'gender': 'None' if OUTPUT_ALL else 'N/A'
         }
     
     name = 'N/A'
     dob = 'N/A'
     age = 'N/A'
+    gender = 'N/A'
     
     if hasattr(person, 'name') and person.name:
         name = person.name
@@ -464,7 +743,12 @@ def format_person(person) -> Dict[str, str]:
     elif OUTPUT_ALL:
         age = 'None'
     
-    return {'name': name, 'dob': dob, 'age': age}
+    if hasattr(person, 'gender') and person.gender:
+        gender = person.gender
+    elif OUTPUT_ALL:
+        gender = 'None'
+    
+    return {'name': name, 'dob': dob, 'age': age, 'gender': gender}
 
 
 def format_emails(emails: List[str]) -> str:
@@ -516,19 +800,36 @@ def format_search_metadata(result) -> Dict[str, str]:
         metadata['addresses_structured'] = format_addresses_structured(result.addresses_structured)
     if hasattr(result, 'other_emails'):
         metadata['other_emails'] = format_emails(result.other_emails) if hasattr(result, 'other_emails') else ('None' if OUTPUT_ALL else 'N/A')
+    # Extra-info enrichment
+    if hasattr(result, 'location_metro') and result.location_metro:
+        metadata['location_metro'] = result.location_metro
+    if hasattr(result, 'companies') and result.companies:
+        metadata['companies'] = '; '.join(f"{c.company_name}" + (f" ({c.position})" if c.position else "") for c in result.companies)
+    if hasattr(result, 'industry') and result.industry:
+        metadata['industry'] = result.industry
+    if hasattr(result, 'linkedin_url') and result.linkedin_url:
+        metadata['linkedin_url'] = result.linkedin_url
+    if hasattr(result, 'linkedin_id') and result.linkedin_id:
+        metadata['linkedin_id'] = result.linkedin_id
+    if hasattr(result, 'social_media_identifiers') and result.social_media_identifiers:
+        metadata['social_media_identifiers'] = '; '.join(f"{s.platform}:{s.identifier}" for s in result.social_media_identifiers)
+    if hasattr(result, 'education') and result.education:
+        metadata['education'] = '; '.join(f"{e.school_name}" + (f" ({e.start_date}-{e.end_date})" if (e.start_date or e.end_date) else "") for e in result.education)
+    if hasattr(result, 'recovery_check') and result.recovery_check:
+        rc = result.recovery_check
+        metadata['recovery_check'] = f"matched={rc.matched} matched_number={rc.matched_number or 'N/A'} modules={','.join(rc.modules_used or [])}"
     
     return metadata
 
 
-def create_output_line(result, original_email: str) -> str:
-    """Create a formatted output line based on configured fields."""
+def create_output_row(result, original_email: str):
+    """Build list of output values for configured fields. Returns None if no result and not OUTPUT_ALL."""
     if not result:
         if OUTPUT_ALL:
             enabled_fields = get_output_field_order()
-            empty_values = ['None'] * len(enabled_fields)
-            return OUTPUT_SEPARATOR.join(empty_values)
+            return ['None'] * len(enabled_fields)
         return None
-    
+
     person_info = format_person(result.person)
     phone_numbers = result.phone_numbers if hasattr(result, 'phone_numbers') else []
     all_numbers = format_phone_numbers(phone_numbers)
@@ -537,10 +838,10 @@ def create_output_line(result, original_email: str) -> str:
     emails = result.emails if hasattr(result, 'emails') else []
     all_emails = format_emails(emails)
     metadata = format_search_metadata(result)
-    
+
     enabled_fields = get_output_field_order()
     output_values = []
-    
+
     for field in enabled_fields:
         if field == 'email':
             output_values.append(metadata.get('email', original_email))
@@ -550,6 +851,8 @@ def create_output_line(result, original_email: str) -> str:
             output_values.append(person_info['dob'])
         elif field == 'age':
             output_values.append(person_info['age'])
+        elif field == 'gender':
+            output_values.append(person_info.get('gender', 'N/A'))
         elif field == 'phone_numbers':
             output_values.append(all_numbers)
         elif field == 'addresses':
@@ -586,10 +889,68 @@ def create_output_line(result, original_email: str) -> str:
             output_values.append(metadata.get('confirmed_numbers', 'N/A'))
         elif field == 'addresses_structured':
             output_values.append(metadata.get('addresses_structured', 'N/A'))
+        elif field == 'location_metro':
+            output_values.append(metadata.get('location_metro', 'N/A'))
+        elif field == 'companies':
+            output_values.append(metadata.get('companies', 'N/A'))
+        elif field == 'industry':
+            output_values.append(metadata.get('industry', 'N/A'))
+        elif field == 'linkedin_url':
+            output_values.append(metadata.get('linkedin_url', 'N/A'))
+        elif field == 'linkedin_id':
+            output_values.append(metadata.get('linkedin_id', 'N/A'))
+        elif field == 'social_media_identifiers':
+            output_values.append(metadata.get('social_media_identifiers', 'N/A'))
+        elif field == 'education':
+            output_values.append(metadata.get('education', 'N/A'))
+        elif field == 'recovery_check':
+            output_values.append(metadata.get('recovery_check', 'N/A'))
         else:
             output_values.append('N/A')
-    
-    return OUTPUT_SEPARATOR.join(output_values)
+
+    return output_values
+
+
+def create_output_line(result, original_email: str):
+    """Create a formatted output line (text or CSV). Returns None if no result and not OUTPUT_ALL."""
+    row = create_output_row(result, original_email)
+    if row is None:
+        return None
+    sep = get_output_separator()
+    if OUTPUT_FORMAT == 'csv':
+        return sep.join(_csv_quote_field(str(v), sep) for v in row)
+    return sep.join(row)
+
+
+def create_output_dict(result, original_email: str):
+    """Create a dict of field -> value for JSON output. Returns None if no result and not OUTPUT_ALL."""
+    row = create_output_row(result, original_email)
+    if row is None:
+        return None
+    return dict(zip(get_output_field_order(), row))
+
+
+def write_result_record(f, result, email: str) -> None:
+    """Write one result record (or empty record when OUTPUT_ALL and result is None). No-op if result is None and not OUTPUT_ALL."""
+    if OUTPUT_FORMAT == 'json':
+        obj = create_output_dict(result, email)
+        if obj is not None:
+            f.write(json.dumps(obj, ensure_ascii=False) + '\n')
+    else:
+        line = create_output_line(result, email)
+        if line is not None:
+            f.write(line + '\n')
+
+
+def write_error_record(f, error_line: str) -> None:
+    """Write one error line. error_line is the text/csv line; for JSON we parse and write {'email': ..., 'error': ...}."""
+    if OUTPUT_FORMAT == 'json':
+        parts = error_line.split(' | ERROR: ', 1)
+        email = parts[0].strip()
+        err = parts[1].strip() if len(parts) > 1 else error_line
+        f.write(json.dumps({'email': email, 'error': err}, ensure_ascii=False) + '\n')
+    else:
+        f.write(error_line + '\n')
 
 
 def handle_api_error(error: Exception, email: str) -> str:
@@ -663,15 +1024,16 @@ def fetch_email_info(email: str, output_file: str, api_client: SearchAPI) -> Non
                 house_value=HOUSE_VALUE,
                 extra_info=EXTRA_INFO,
                 carrier_info=CARRIER_INFO,
-                tlo_enrichment=TLO_ENRICHMENT
+                tlo_enrichment=TLO_ENRICHMENT,
+                recovery_check=RECOVERY_CHECK,
+                recovery_modules=RECOVERY_MODULES,
             )
             #print(result)
             
             if not result:
                 if OUTPUT_ALL:
-                    result_line = create_output_line(None, email)
                     with open(output_file, 'a', encoding=OUTPUT_ENCODING) as f:
-                        f.write(result_line + '\n')
+                        write_result_record(f, None, email)
                     logger.debug(f"No result object for: {email}")
                 return
             
@@ -683,7 +1045,7 @@ def fetch_email_info(email: str, output_file: str, api_client: SearchAPI) -> Non
                (hasattr(result, 'emails') and result.emails):
                 has_any_data = True
             
-            if TLO_ENRICHMENT and not has_any_data:
+            if (EXTRA_INFO or TLO_ENRICHMENT) and not has_any_data:
                 if (hasattr(result, 'phone_numbers_full') and result.phone_numbers_full) or \
                    (hasattr(result, 'addresses_structured') and result.addresses_structured) or \
                    (hasattr(result, 'all_names') and result.all_names) or \
@@ -693,7 +1055,12 @@ def fetch_email_info(email: str, output_file: str, api_client: SearchAPI) -> Non
                    (hasattr(result, 'criminal_records') and result.criminal_records) or \
                    (hasattr(result, 'censored_numbers') and result.censored_numbers) or \
                    (hasattr(result, 'confirmed_numbers') and result.confirmed_numbers) or \
-                   (hasattr(result, 'other_emails') and result.other_emails):
+                   (hasattr(result, 'other_emails') and result.other_emails) or \
+                   (hasattr(result, 'companies') and result.companies) or \
+                   (hasattr(result, 'education') and result.education) or \
+                   (hasattr(result, 'social_media_identifiers') and result.social_media_identifiers) or \
+                   (hasattr(result, 'location_metro') and result.location_metro) or \
+                   (hasattr(result, 'recovery_check') and result.recovery_check):
                     has_any_data = True
             
             if not has_any_data and hasattr(result, 'total_results') and result.total_results > 0:
@@ -742,7 +1109,7 @@ def fetch_email_info(email: str, output_file: str, api_client: SearchAPI) -> Non
             
             if result_line and has_data:
                 with open(output_file, 'a', encoding=OUTPUT_ENCODING) as f:
-                    f.write(result_line + '\n')
+                    write_result_record(f, result, email)
                 
                 data_fields = []
                 if hasattr(result, 'phone_numbers') and result.phone_numbers:
@@ -829,9 +1196,8 @@ def fetch_email_info(email: str, output_file: str, api_client: SearchAPI) -> Non
             
             if "No data found" in error_str:
                 if OUTPUT_ALL:
-                    result_line = create_output_line(None, email)
                     with open(output_file, 'a', encoding=OUTPUT_ENCODING) as f:
-                        f.write(result_line + '\n')
+                        write_result_record(f, None, email)
                     logger.debug(f"No data found for: {email}")
                 return
             
@@ -840,7 +1206,7 @@ def fetch_email_info(email: str, output_file: str, api_client: SearchAPI) -> Non
                 if attempt == MAX_RETRIES - 1:
                     error_line = f"{email} | ERROR: Rate limited (403) - Too many requests"
                     with open(output_file, 'a', encoding=OUTPUT_ENCODING) as f:
-                        f.write(error_line + '\n')
+                        write_error_record(f, error_line)
                     return
                 else:
                     import time
@@ -852,14 +1218,14 @@ def fetch_email_info(email: str, output_file: str, api_client: SearchAPI) -> Non
             if isinstance(e, (AuthenticationError, InsufficientBalanceError, ValidationError)):
                 error_line = handle_api_error(e, email)
                 with open(output_file, 'a', encoding=OUTPUT_ENCODING) as f:
-                    f.write(error_line + '\n')
+                    write_error_record(f, error_line)
                 return
             
             elif isinstance(e, (RateLimitError, TimeoutError, NetworkError, ServerError)):
                 if attempt == MAX_RETRIES - 1:
                     error_line = handle_api_error(e, email)
                     with open(output_file, 'a', encoding=OUTPUT_ENCODING) as f:
-                        f.write(error_line + '\n')
+                        write_error_record(f, error_line)
                     return
                 else:
                     import time
@@ -871,7 +1237,7 @@ def fetch_email_info(email: str, output_file: str, api_client: SearchAPI) -> Non
                 if attempt == MAX_RETRIES - 1:
                     error_line = f"{email} | ERROR: Search API error - {error_str}"
                     with open(output_file, 'a', encoding=OUTPUT_ENCODING) as f:
-                        f.write(error_line + '\n')
+                        write_error_record(f, error_line)
                 else:
                     import time
                     delay = RETRY_DELAY_BASE ** attempt
@@ -882,7 +1248,7 @@ def fetch_email_info(email: str, output_file: str, api_client: SearchAPI) -> Non
             if attempt == MAX_RETRIES - 1:
                 error_line = f"{email} | ERROR: Unexpected error - {str(e)}"
                 with open(output_file, 'a', encoding=OUTPUT_ENCODING) as f:
-                    f.write(error_line + '\n')
+                    write_error_record(f, error_line)
             else:
                 import time
                 delay = RETRY_DELAY_BASE ** attempt
@@ -958,30 +1324,49 @@ def main(emails: List[str], output_file: str) -> None:
 
 
 if __name__ == '__main__':
+    # Load persisted config or run interactive setup
+    use_configure = '--configure' in sys.argv or '-c' in sys.argv
+    config_loaded = load_config()
+
+    if use_configure or not config_loaded:
+        interactive_setup()
+        if use_configure:
+            print("Re-run without --configure to process emails, or continue now.")
+            try:
+                cont = input("Continue to process emails now? (y/n) [y]: ").strip().lower()
+                if cont in ('n', 'no'):
+                    sys.exit(0)
+            except EOFError:
+                pass
+
     output_file = 'output.txt'
-    
-    if INCLUDE_HEADER:
+
+    if OUTPUT_FORMAT == 'json':
+        open(output_file, 'w', encoding=OUTPUT_ENCODING).close()
+    elif INCLUDE_HEADER:
         header = create_header()
         with open(output_file, 'w', encoding=OUTPUT_ENCODING) as f:
             if header:
                 f.write(header + '\n')
     else:
         open(output_file, 'w', encoding=OUTPUT_ENCODING).close()
-    
+
     try:
         emails = load_emails('emails.txt')
         if not emails:
             logger.error("No valid emails found in emails.txt")
             exit(1)
-        
+
         logger.info(f"Starting email search with {len(emails)} emails")
-        logger.info(f"Configuration: OUTPUT_ALL={OUTPUT_ALL}, HOUSE_VALUE={HOUSE_VALUE}, EXTRA_INFO={EXTRA_INFO}, CARRIER_INFO={CARRIER_INFO}, TLO_ENRICHMENT={TLO_ENRICHMENT}")
-        logger.info(f"Output format: {OUTPUT_SEPARATOR.join(get_output_field_order())}")
-        
+        logger.info(f"Configuration: HOUSE_VALUE={HOUSE_VALUE}, EXTRA_INFO={EXTRA_INFO}, CARRIER_INFO={CARRIER_INFO}, TLO_ENRICHMENT={TLO_ENRICHMENT}, RECOVERY_CHECK={RECOVERY_CHECK}")
+        logger.info(f"Output fields: {', '.join(get_output_field_order())}")
+        if RECOVERY_MODULES:
+            logger.info(f"Recovery modules: order={RECOVERY_MODULES.get('module_order')}, enabled={RECOVERY_MODULES.get('enabled_modules')}")
+
         main(emails, output_file)
-        
+
         logger.info(f"Processing complete. Results saved to {output_file}")
-        
+
     except FileNotFoundError:
         logger.error("Error: emails.txt file not found. Please create a file with one email per line.")
     except Exception as e:
