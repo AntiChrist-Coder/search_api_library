@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tests / type checkers
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Search batch tool — local config, logs, and data (examples/search.py)
+examples/search_api_config.json
+examples/search_api.log
+examples/output.txt
+examples/output_phone.txt
+examples/emails.txt
+examples/phones.txt
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

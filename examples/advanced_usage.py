@@ -71,41 +71,46 @@ def demonstrate_access_logs(client):
     print("="*60)
     
     try:
-        # Get access logs
-        access_logs = client.get_access_logs()
+        # Get access logs (optional limit)
+        access_logs = client.get_access_logs(limit=100)
         print(f"📊 Total access log entries: {len(access_logs)}")
         
         if access_logs:
-            # Show most recent access
             most_recent = max(access_logs, key=lambda x: x.last_accessed or datetime.min)
             print(f"🕒 Most recent access: {most_recent.last_accessed}")
             print(f"🌐 IP Address: {most_recent.ip_address}")
+            if most_recent.search_type:
+                print(f"   Search type: {most_recent.search_type}, Cost: ${most_recent.search_cost:.4f}" if most_recent.search_cost else f"   Search type: {most_recent.search_type}")
             
-            # Show unique IP addresses
             unique_ips = set(log.ip_address for log in access_logs)
             print(f"🌍 Unique IP addresses: {len(unique_ips)}")
             
-            # Show access frequency by IP
             ip_counts = {}
             for log in access_logs:
                 ip_counts[log.ip_address] = ip_counts.get(log.ip_address, 0) + 1
-            
             print("\n📈 Access frequency by IP:")
             for ip, count in sorted(ip_counts.items(), key=lambda x: x[1], reverse=True)[:5]:
                 print(f"   {ip}: {count} accesses")
             
-            # Show recent activity (last 10 entries)
             print(f"\n📋 Recent activity (last 10 entries):")
             for i, log in enumerate(access_logs[:10], 1):
                 print(f"   {i}. {log.ip_address} - {log.last_accessed}")
-                if log.endpoint:
-                    print(f"      Endpoint: {log.endpoint}")
-                if log.status_code:
-                    print(f"      Status: {log.status_code}")
-                if log.response_time:
-                    print(f"      Response Time: {log.response_time:.3f}s")
+                if log.search_type:
+                    print(f"      Type: {log.search_type}, Cost: ${log.search_cost:.4f}" if log.search_cost else f"      Type: {log.search_type}")
         else:
             print("📭 No access logs found")
+        
+        # Usage stats and cache stats
+        stats = client.get_usage_stats()
+        print(f"\n📊 Usage: today {stats.today_searches} searches (${stats.today_cost:.4f}), total {stats.total_searches} (${stats.total_cost:.4f})")
+        cache_stats = client.get_cache_stats()
+        print(f"📦 Cache: {cache_stats}")
+        
+        # Recovery modules (for email recovery verification)
+        recovery = client.get_recovery_modules()
+        print(f"\n📱 Recovery modules: {[m.module_name for m in recovery.modules]}")
+        if recovery.pricing:
+            print(f"   Pricing: {recovery.pricing}")
             
     except Exception as e:
         print(f"❌ Error retrieving access logs: {e}")
@@ -125,7 +130,8 @@ def demonstrate_tlo_enrichment(client):
             house_value=True,
             extra_info=True,
             carrier_info=True,
-            tlo_enrichment=True
+            tlo_enrichment=True,
+            recovery_check=False,  # Set True + recovery_modules to verify phones
         )
         
         print(f"✅ Search completed")
@@ -138,7 +144,27 @@ def demonstrate_tlo_enrichment(client):
             print(f"   Zestimate: ${result.pricing.zestimate_cost:.4f}")
             print(f"   Carrier: ${result.pricing.carrier_cost:.4f}")
             print(f"   TLO Enrichment: ${result.pricing.tlo_enrichment_cost:.4f}")
+            if result.pricing.recovery_check_cost:
+                print(f"   Recovery Check: ${result.pricing.recovery_check_cost:.4f}")
             print(f"   Total: ${result.pricing.total_cost:.4f}")
+        
+        if result.recovery_check:
+            print(f"\n📱 Recovery Check: matched={result.recovery_check.matched}, modules_used={result.recovery_check.modules_used}")
+        
+        if result.person and result.person.gender:
+            print(f"\n👤 Gender: {result.person.gender}")
+        if result.location_metro:
+            print(f"📍 Location/Metro: {result.location_metro}")
+        if result.companies:
+            print(f"🏢 Companies: {[(c.company_name, c.position) for c in result.companies[:3]]}")
+        if result.industry:
+            print(f"💼 Industry: {result.industry}")
+        if result.linkedin_url:
+            print(f"🔗 LinkedIn: {result.linkedin_url}")
+        if result.social_media_identifiers:
+            print(f"📱 Social: {[(s.platform, s.identifier) for s in result.social_media_identifiers[:3]]}")
+        if result.education:
+            print(f"🎓 Education: {[(e.school_name, e.start_date, e.end_date) for e in result.education[:2]]}")
         
         if result.alternative_names:
             print(f"\n👤 Alternative Names ({len(result.alternative_names)}):")
@@ -230,6 +256,7 @@ def demonstrate_error_handling(client):
         ("Invalid email", "invalid-email", client.search_email),
         ("Invalid phone", "invalid-phone", client.search_phone),
         ("Invalid domain", "invalid-domain", client.search_domain),
+        ("Empty company", "", client.search_company),
         ("Empty email", "", client.search_email),
         ("Empty phone", "", client.search_phone),
         ("Empty domain", "", client.search_domain),
@@ -287,6 +314,8 @@ def demonstrate_batch_operations(client):
         "invalid-domain",
         "sample.org",
     ]
+    
+    companies = ["Acme Corp", "Example Inc"]
     
     print("\n📧 Batch email searches:")
     successful_emails = []
@@ -349,6 +378,14 @@ def demonstrate_batch_operations(client):
     
     print(f"\n   Summary: {len(successful_domains)} successful, {len(failed_domains)} failed")
     print(f"   Total Cost: ${total_cost:.4f}")
+    
+    print("\n🏢 Batch company searches:")
+    for company in companies:
+        try:
+            result = client.search_company(company, page=1, limit=20)
+            print(f"   ✅ {company}: {result.total_results} results (${result.search_cost:.4f})")
+        except Exception as e:
+            print(f"   ❌ {company}: {e}")
 
 def demonstrate_context_manager():
     """Demonstrate context manager usage."""

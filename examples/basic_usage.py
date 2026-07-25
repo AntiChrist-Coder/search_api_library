@@ -27,22 +27,30 @@ def main():
         print("Access Logs:")
         print("="*50)
         
-        access_logs = client.get_access_logs()
+        access_logs = client.get_access_logs(limit=50)
         print(f"Total access log entries: {len(access_logs)}")
         
         for i, log in enumerate(access_logs[:5], 1):
             print(f"\n{i}. IP: {log.ip_address}")
             print(f"   Last accessed: {log.last_accessed}")
+            if log.search_type:
+                print(f"   Search type: {log.search_type}, Cost: ${log.search_cost:.4f}" if log.search_cost else f"   Search type: {log.search_type}")
             if log.user_agent:
                 print(f"   User Agent: {log.user_agent}")
             if log.endpoint:
                 print(f"   Endpoint: {log.endpoint}")
-            if log.method:
-                print(f"   Method: {log.method}")
-            if log.status_code:
-                print(f"   Status Code: {log.status_code}")
-            if log.response_time:
-                print(f"   Response Time: {log.response_time:.3f}s")
+        
+        # Usage stats and cache stats
+        stats = client.get_usage_stats()
+        print(f"\nUsage: today {stats.today_searches} searches (${stats.today_cost:.4f}), total {stats.total_searches} (${stats.total_cost:.4f})")
+        cache_stats = client.get_cache_stats()
+        print(f"Cache stats: {cache_stats}")
+        
+        # Available recovery modules (for email recovery verification)
+        recovery = client.get_recovery_modules()
+        print(f"\nRecovery modules: {[m.module_name for m in recovery.modules]}")
+        if recovery.pricing:
+            print(f"Recovery pricing: {recovery.pricing}")
         
         print("\n" + "="*50)
         print("Searching by email:")
@@ -54,6 +62,8 @@ def main():
             extra_info=True,
             carrier_info=True,
             tlo_enrichment=True,
+            recovery_check=False,  # Set True to verify phone numbers via recovery modules
+            # recovery_modules={"module_order": ["yahoo", "outlook"], "enabled_modules": ["yahoo", "outlook"]},
             phone_format="international"
         )
         
@@ -70,12 +80,40 @@ def main():
             print(f"   Zestimate: ${result.pricing.zestimate_cost:.4f}")
             print(f"   Carrier: ${result.pricing.carrier_cost:.4f}")
             print(f"   TLO Enrichment: ${result.pricing.tlo_enrichment_cost:.4f}")
+            if result.pricing.recovery_check_cost:
+                print(f"   Recovery Check: ${result.pricing.recovery_check_cost:.4f}")
             print(f"   Total: ${result.pricing.total_cost:.4f}")
+        
+        if result.recovery_check:
+            print(f"\n📱 Recovery Check: matched={result.recovery_check.matched}, matched_number={result.recovery_check.matched_number}, modules_used={result.recovery_check.modules_used}")
         
         if result.person:
             print(f"\nName: {result.person.name}")
             print(f"DOB: {result.person.dob}")
             print(f"Age: {result.person.age}")
+            if result.person.gender:
+                print(f"Gender: {result.person.gender}")
+        
+        # Extra-info enrichment (when extra_info=True)
+        if result.location_metro:
+            print(f"Location/Metro: {result.location_metro}")
+        if result.companies:
+            print("\nCompanies:")
+            for c in result.companies:
+                print(f"  - {c.company_name}" + (f" ({c.position})" if c.position else ""))
+        if result.industry:
+            print(f"Industry: {result.industry}")
+        if result.linkedin_url:
+            print(f"LinkedIn: {result.linkedin_url}")
+        if result.social_media_identifiers:
+            print("Social: " + ", ".join(f"{s.platform}={s.identifier}" for s in result.social_media_identifiers[:3]))
+        if result.education:
+            print("Education:")
+            for e in result.education:
+                print(f"  - {e.school_name}" + (f" ({e.start_date}-{e.end_date})" if e.start_date or e.end_date else ""))
+        
+        if result.pagination:
+            print(f"\nPagination: page {result.pagination.get('current_page')}, total {result.pagination.get('total_results')}")
         
         print(f"\nTotal Results: {result.total_results}")
         
@@ -208,6 +246,12 @@ def main():
                 print(f"  Name: {result.person.name}")
                 print(f"  DOB: {result.person.dob}")
                 print(f"  Age: {result.person.age}")
+                if result.person.gender:
+                    print(f"  Gender: {result.person.gender}")
+            if result.location_metro:
+                print(f"  Location: {result.location_metro}")
+            if result.companies:
+                print("  Companies: " + ", ".join(c.company_name for c in result.companies[:2]))
             
             print(f"  Total Results: {result.total_results}")
             
@@ -246,10 +290,21 @@ def main():
                         print(f"      Relationship: {person.relationship}")
         
         print("\n" + "="*50)
+        print("Searching by company:")
+        print("="*50)
+        
+        company_result = client.search_company("Acme Corp", country="US", page=1, limit=50)
+        print(f"Company: {company_result.company}")
+        print(f"Total Results: {company_result.total_results}")
+        print(f"Search Cost: ${company_result.search_cost}")
+        for i, contact in enumerate(company_result.results[:3], 1):
+            print(f"  {i}. {contact.person.name if contact.person else 'N/A'} - {contact.emails[:1]}")
+        
+        print("\n" + "="*50)
         print("Searching by domain:")
         print("="*50)
         
-        domain_result = client.search_domain("example.com")
+        domain_result = client.search_domain("example.com", page=1, limit=100)
         print(f"Domain: {domain_result.domain}")
         print(f"Domain Valid: {domain_result.domain_valid}")
         print(f"Total Results: {domain_result.total_results}")
@@ -270,7 +325,10 @@ def main():
             
             if email_result.person:
                 print(f"    Name: {email_result.person.name}")
-            
+                if email_result.person.gender:
+                    print(f"    Gender: {email_result.person.gender}")
+            if email_result.companies:
+                print(f"    Companies: {[c.company_name for c in email_result.companies]}")
             print(f"    Total Results: {email_result.total_results}")
             
             print("    Addresses:")
@@ -299,6 +357,11 @@ def main():
             client.search_domain("invalid-domain")
         except ValidationError as e:
             print(f"Validation Error: {e}")
+        
+        try:
+            client.search_company("")
+        except ValidationError as e:
+            print(f"Validation Error (empty company): {e}")
         
     except InsufficientBalanceError as e:
         print(f"Insufficient Balance Error: {e}")
